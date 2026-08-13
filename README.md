@@ -36,7 +36,7 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 
 ## 工作原理
 
-- **状态解析**（`lib/workflow.js`）：向上找 `.git` 项目根 → 读 `.trellis/workflow.md` 解析状态块 → 活跃任务判定：先看会话指针 `.trellis/.runtime/sessions/dsh_<id>.json`，再全局扫描 `tasks/*/task.json`（in_progress 优先于 planning，按 mtime）。
+- **状态解析**（`lib/workflow.js`）：向上找 `.git` 项目根 → 读 `.trellis/workflow.md` 解析状态块 → 活跃任务判定：先看会话指针 `.trellis/.runtime/sessions/dsh_<id>.json`（`task.py start/create` 写入），没有指针再全局扫描 `tasks/*/task.json`（in_progress 优先于 planning，按 mtime；任务 archive 后退出扫描）。全局回退是刻意保留的：让子代理轮次也能看到带递归守卫的 in_progress 面包屑（对应 Codex SubagentStart 注入），并给新会话自动续接路径。
 - **注入去重**：面包屑带 digest，与最近一次注入相同且仍在可见表面则不重复注入。
 - **会话身份**：`DSH_TRELLIS_CONTEXT_ID = dsh_<session.header.id>`（sanitize 规则与 task.py 一致），主会话与子代理 shell 都能拿到（子代理拿自己的 id，指针解析按会话隔离，prelude 回退到派发 prompt 里的 `Active task:` 行）。
 
