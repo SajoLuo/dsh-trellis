@@ -4,7 +4,7 @@ DeepSeek Harness (dsh) host 插件：把 [Trellis](https://github.com/mindfold-a
 
 1. **每轮 workflow-state 面包屑注入** — 在每个 `agent/pre-step`，解析项目 `.trellis/workflow.md` 的 `[workflow-state:*]` 块 + 活跃任务状态（no_task / planning / in_progress），把对应面包屑注入会话（与 `dsh-agent-instructions` 的注入管道相同）。未变化不重复注入；被压缩后自动重注入；提示词里出现独立单词 `no-trellis` 可跳过当轮。
 2. **会话上下文身份** — 注册 `DSH_TRELLIS_CONTEXT_ID`（`dsh_<session-id>`）到每个 agent shell，配合 Trellis 上游补丁，让 `task.py start/create/current` 解析到会话级 active-task 指针。
-3. **`/trellis:*` 命令** — `/trellis:start`、`/trellis:continue`、`/trellis:finish-work`，直接运行项目脚本并展示结果（命令输出不进模型历史）。
+3. **`/trellis` 命令** — `/trellis-status`（活跃任务 + git 状态）、`/trellis-finish`（清 active-task 指针 + 收尾清单）。命令输出不进模型历史；会话仪式（start/continue/finish-work）走技能面 `/trellis-start` 等（命令名避开技能名，避免 slash 遮蔽）。
 
 非 Trellis 项目（无 `.git` 祖先含 `.trellis/workflow.md`）自动静默，零开销。
 
