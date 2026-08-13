@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { join, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import {
   parseWorkflowStateBlocks,
   resolveTrellisState,
@@ -47,7 +47,8 @@ function memoryFs(initial = {}) {
   };
 }
 
-const proj = (rel) => join("C:", "proj", rel);
+const projectRoot = resolve("fixture-project");
+const proj = (rel) => join(projectRoot, rel);
 
 const WORKFLOW_MD = `# Workflow
 [workflow-state:no_task]
@@ -64,8 +65,14 @@ Flow: implement -> check -> update-spec -> commit.
 test("parseWorkflowStateBlocks extracts every status body", () => {
   const blocks = parseWorkflowStateBlocks(WORKFLOW_MD);
   assert.equal(blocks.size, 3);
-  assert.equal(blocks.get("no_task"), "No active task. Ask for task-creation consent.");
-  assert.equal(blocks.get("planning"), "Load trellis-brainstorm; stay in planning.");
+  assert.equal(
+    blocks.get("no_task"),
+    "No active task. Ask for task-creation consent.",
+  );
+  assert.equal(
+    blocks.get("planning"),
+    "Load trellis-brainstorm; stay in planning.",
+  );
   assert.match(blocks.get("in_progress"), /implement -> check/);
 });
 
@@ -77,7 +84,10 @@ test("parseWorkflowStateBlocks ignores unrelated bracketed text", () => {
 });
 
 test("sanitizeContextKey matches Trellis task.py sanitization", () => {
-  assert.equal(sanitizeContextKey("019e456c-ea72-7b60-a8a6"), "019e456c-ea72-7b60-a8a6");
+  assert.equal(
+    sanitizeContextKey("019e456c-ea72-7b60-a8a6"),
+    "019e456c-ea72-7b60-a8a6",
+  );
   assert.equal(sanitizeContextKey("a b!c"), "a_b_c");
   assert.equal(sanitizeContextKey("..__x.."), "x");
 });
@@ -119,11 +129,17 @@ test("resolveTrellisState: no active task → no_task breadcrumb", async () => {
   assert.equal(state.body, "No active task. Ask for task-creation consent.");
 });
 
-test("resolveTrellisState: in_progress task.json → in_progress breadcrumb", async () => {
+test("resolveTrellisState: sole session pointer → in_progress breadcrumb", async () => {
   const fs = memoryFs({
     [proj(".git")]: "",
     [proj(join(".trellis", "workflow.md"))]: WORKFLOW_MD,
-    [proj(join(".trellis", "tasks", "04-17-foo", "task.json"))]: JSON.stringify({ status: "in_progress" }),
+    [proj(join(".trellis", "tasks", "04-17-foo", "task.json"))]: JSON.stringify(
+      { status: "in_progress" },
+    ),
+    [proj(join(".trellis", ".runtime", "sessions", "dsh_other.json"))]:
+      JSON.stringify({
+        current_task: ".trellis/tasks/04-17-foo",
+      }),
   });
   const state = await resolveTrellisState({
     cwd: proj(""),
@@ -136,17 +152,26 @@ test("resolveTrellisState: in_progress task.json → in_progress breadcrumb", as
   assert.equal(state.taskPath, ".trellis/tasks/04-17-foo");
 });
 
-test("resolveTrellisState: session-scoped pointer wins over global scan", async () => {
+test("resolveTrellisState: session-scoped pointer wins over another session", async () => {
   const fs = memoryFs({
     [proj(".git")]: "",
     [proj(join(".trellis", "workflow.md"))]: WORKFLOW_MD,
-    [proj(join(".trellis", "tasks", "04-17-a", "task.json"))]: JSON.stringify({ status: "in_progress" }),
-    [proj(join(".trellis", "tasks", "04-17-b", "task.json"))]: JSON.stringify({ status: "planning" }),
-    [proj(join(".trellis", ".runtime", "sessions", "dsh_me.json"))]: JSON.stringify({
-      platform: "dsh",
-      current_task: ".trellis/tasks/04-17-b",
-      last_seen_at: "2026-08-14T00:00:00Z",
+    [proj(join(".trellis", "tasks", "04-17-a", "task.json"))]: JSON.stringify({
+      status: "in_progress",
     }),
+    [proj(join(".trellis", "tasks", "04-17-b", "task.json"))]: JSON.stringify({
+      status: "planning",
+    }),
+    [proj(join(".trellis", ".runtime", "sessions", "dsh_me.json"))]:
+      JSON.stringify({
+        platform: "dsh",
+        current_task: ".trellis/tasks/04-17-b",
+        last_seen_at: "2026-08-14T00:00:00Z",
+      }),
+    [proj(join(".trellis", ".runtime", "sessions", "dsh_other.json"))]:
+      JSON.stringify({
+        current_task: ".trellis/tasks/04-17-a",
+      }),
   });
   const state = await resolveTrellisState({
     cwd: proj(""),
@@ -159,16 +184,19 @@ test("resolveTrellisState: session-scoped pointer wins over global scan", async 
   assert.equal(state.taskPath, ".trellis/tasks/04-17-b");
 });
 
-test("resolveTrellisState: foreign-session pointer is ignored, global scan used", async () => {
+test("resolveTrellisState: sole foreign-session pointer is the conservative fallback", async () => {
   const fs = memoryFs({
     [proj(".git")]: "",
     [proj(join(".trellis", "workflow.md"))]: WORKFLOW_MD,
-    [proj(join(".trellis", "tasks", "04-17-a", "task.json"))]: JSON.stringify({ status: "in_progress" }),
-    [proj(join(".trellis", ".runtime", "sessions", "codex_zzz.json"))]: JSON.stringify({
-      platform: "codex",
-      current_task: join(".trellis", "tasks", "04-17-a"),
-      last_seen_at: "2026-08-14T00:00:00Z",
+    [proj(join(".trellis", "tasks", "04-17-a", "task.json"))]: JSON.stringify({
+      status: "in_progress",
     }),
+    [proj(join(".trellis", ".runtime", "sessions", "codex_zzz.json"))]:
+      JSON.stringify({
+        platform: "codex",
+        current_task: ".trellis/tasks/04-17-a",
+        last_seen_at: "2026-08-14T00:00:00Z",
+      }),
   });
   const state = await resolveTrellisState({
     cwd: proj(""),
@@ -179,6 +207,36 @@ test("resolveTrellisState: foreign-session pointer is ignored, global scan used"
   });
   assert.equal(state.status, "in_progress");
   assert.equal(state.taskPath, ".trellis/tasks/04-17-a");
+});
+
+test("resolveTrellisState: multiple foreign session pointers refuse to guess", async () => {
+  const fs = memoryFs({
+    [proj(".git")]: "",
+    [proj(join(".trellis", "workflow.md"))]: WORKFLOW_MD,
+    [proj(join(".trellis", "tasks", "04-17-a", "task.json"))]: JSON.stringify({
+      status: "in_progress",
+    }),
+    [proj(join(".trellis", "tasks", "04-17-b", "task.json"))]: JSON.stringify({
+      status: "planning",
+    }),
+    [proj(join(".trellis", ".runtime", "sessions", "dsh_a.json"))]:
+      JSON.stringify({
+        current_task: ".trellis/tasks/04-17-a",
+      }),
+    [proj(join(".trellis", ".runtime", "sessions", "dsh_b.json"))]:
+      JSON.stringify({
+        current_task: ".trellis/tasks/04-17-b",
+      }),
+  });
+  const state = await resolveTrellisState({
+    cwd: proj(""),
+    markers: [".git"],
+    contextKey: "dsh_unknown",
+    fs,
+    cache: new Map(),
+  });
+  assert.equal(state.status, "no_task");
+  assert.equal(state.taskPath, null);
 });
 
 test("resolveTrellisState: zero workflow-state blocks → silent", async () => {
@@ -199,8 +257,15 @@ test("resolveTrellisState: zero workflow-state blocks → silent", async () => {
 test("resolveTrellisState: in_progress with no matching block uses fallback text", async () => {
   const fs = memoryFs({
     [proj(".git")]: "",
-    [proj(join(".trellis", "workflow.md"))]: "[workflow-state:no_task]\nbody\n[/workflow-state:no_task]",
-    [proj(join(".trellis", "tasks", "t", "task.json"))]: JSON.stringify({ status: "in_progress" }),
+    [proj(join(".trellis", "workflow.md"))]:
+      "[workflow-state:no_task]\nbody\n[/workflow-state:no_task]",
+    [proj(join(".trellis", "tasks", "t", "task.json"))]: JSON.stringify({
+      status: "in_progress",
+    }),
+    [proj(join(".trellis", ".runtime", "sessions", "dsh_only.json"))]:
+      JSON.stringify({
+        current_task: ".trellis/tasks/t",
+      }),
   });
   const state = await resolveTrellisState({
     cwd: proj(""),

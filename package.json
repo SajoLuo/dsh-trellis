@@ -1,7 +1,7 @@
 {
   "name": "dsh-trellis",
   "version": "0.1.0",
-  "description": "Trellis workflow integration for DeepSeek Harness: per-turn workflow-state breadcrumb injection, /trellis commands, and session-scoped context identity.",
+  "description": "Trellis workflow integration for DeepSeek Harness: per-turn workflow-state breadcrumbs, utility commands, and native session identity.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -11,7 +11,17 @@
     "lib",
     "cordis.patch.yml"
   ],
+  "author": "SajoLuo",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SajoLuo/dsh-trellis.git"
+  },
+  "homepage": "https://github.com/SajoLuo/dsh-trellis#readme",
+  "bugs": {
+    "url": "https://github.com/SajoLuo/dsh-trellis/issues"
+  },
+  "packageManager": "pnpm@10.33.0",
   "dsh": {
     "bundle": {
       "patch": "cordis.patch.yml"
@@ -24,14 +34,14 @@
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-shell-env": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-shell-env": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1"
   }
 }
