@@ -1,0 +1,5 @@
+# dsh-trellis bundle patch: one insert over the composed profile tree.
+# Service injection (shellEnv, commands) is declared by the plugin module.
+- insert:
+    - id: dsh-trellis
+      name: dsh-trellis
