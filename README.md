@@ -47,6 +47,7 @@ dsh plugin --profile tui add file:C:/path/to/dsh-trellis
 - **状态解析**（`lib/workflow.js`）：向上找项目根 → 读 `.trellis/workflow.md` 解析状态块 → 先看当前会话指针 `.trellis/.runtime/sessions/dsh_<id>.json`。当前指针缺失时只允许 Trellis 官方的“唯一 session 文件”回退；存在 0 个或 2 个以上 session 文件就拒绝猜测，避免多个 DSH 窗口串任务。
 - **注入去重**：面包屑带 digest，与最近一次注入相同且仍在可见表面则不重复注入。
 - **会话身份**：DSH 原生提供 `DSH_SESSION_ID = agent.session.header.id`，插件通过 `shellEnv` 为每次执行生成 `DSH_TRELLIS_CONTEXT_ID = dsh_<session-id>`。DSH 会先丢弃环境中已有的 `DSH_*` 再重建受管命名空间，因此这个值不会来自外层 host；Trellis beta 适配在普通 `TRELLIS_CONTEXT_ID` 之前解析它，避免嵌套启动时串到外层任务。主会话与子代理仍各自保留 DSH 身份，子代理通过派发 prompt 首行的 `Active task:` 和角色 prelude 取得父任务上下文。
+- **Headless 会话**：每次 `dsh --profile headless` 调用都是新的 DSH session。需要跨轮保留 active-task 指针时，应保持同一会话或显式 resume 返回的 session id，不能把多个独立 headless 调用当成同一 session。
 - **取消与生命周期**：命令和 `trellis_wait` 都继承 DSH invocation 的 `AbortSignal`；取消后命令不会继续尝试另一个 Python 启动器，等待工具也会立即注销临时事件监听器。插件卸载时只注销自己的命令、工具和监听器。
 - **子代理并发**：workflow 只有在发现 `trellis_wait` 时才使用 DSH 原生 continuable 后台 `subagent`。主会话并行做独立工作；需要汇合时调用一次 `trellis_wait <subagent_id>` 等待原生结算事件。没有该工具时，首次派发直接设置 `run_in_background: false`，绝不留下无法事件汇合的后台子代理。
 
