@@ -21,6 +21,13 @@ function harness() {
       },
     },
     subagents: {},
+    shellEnv: {
+      register(contributor) {
+        registrations.push(`shell-env:${contributor.name}`);
+        return () =>
+          registrations.push(`disposed-shell-env:${contributor.name}`);
+      },
+    },
     tools: {
       register(tool) {
         registrations.push(`tool:${tool.name}`);
@@ -44,7 +51,11 @@ test("enabled plugin registers commands, wait tool, one pre-step listener, and d
   apply(state.ctx, {});
   assert.deepEqual(
     state.effects.map(({ label }) => label),
-    ["dsh-trellis.commands", "dsh-trellis.wait-tool"],
+    [
+      "dsh-trellis.commands",
+      "dsh-trellis.wait-tool",
+      "dsh-trellis.session-env",
+    ],
   );
   assert.deepEqual(
     state.listeners.map(({ event }) => event),
@@ -53,6 +64,7 @@ test("enabled plugin registers commands, wait tool, one pre-step listener, and d
   assert.deepEqual(state.registrations.slice().sort(), [
     "command:trellis-finish",
     "command:trellis-status",
+    "shell-env:dsh-trellis-session",
     "tool:trellis_wait",
   ]);
 
@@ -60,4 +72,7 @@ test("enabled plugin registers commands, wait tool, one pre-step listener, and d
   assert.ok(state.registrations.includes("disposed:trellis-status"));
   assert.ok(state.registrations.includes("disposed:trellis-finish"));
   assert.ok(state.registrations.includes("disposed-tool:trellis_wait"));
+  assert.ok(
+    state.registrations.includes("disposed-shell-env:dsh-trellis-session"),
+  );
 });

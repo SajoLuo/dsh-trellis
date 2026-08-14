@@ -61,34 +61,49 @@ test("pythonCandidates uses platform-aware defaults and honors an override", () 
 });
 
 test("runTrellisScript falls back after a missing Windows launcher and exports the session id", async () => {
+  const previousOuterContext = process.env.TRELLIS_CONTEXT_ID;
+  process.env.TRELLIS_CONTEXT_ID = "claude_outer-session";
   const calls = [];
-  const result = await runTrellisScript(
-    { pythonCmd: "" },
-    root,
-    "abc def",
-    ["current", "--source"],
-    {
-      platform: "win32",
-      async execFile(command, args, options) {
-        calls.push({ command, args, options });
-        if (command === "py")
-          throw Object.assign(new Error("missing"), { code: "ENOENT" });
-        return { stdout: "Current task: demo\n", stderr: "" };
+  try {
+    const result = await runTrellisScript(
+      { pythonCmd: "" },
+      root,
+      "abc def",
+      ["current", "--source"],
+      {
+        platform: "win32",
+        async execFile(command, args, options) {
+          calls.push({ command, args, options });
+          if (command === "py")
+            throw Object.assign(new Error("missing"), { code: "ENOENT" });
+          return { stdout: "Current task: demo\n", stderr: "" };
+        },
       },
-    },
-  );
+    );
 
-  assert.equal(result.kind, "success");
-  assert.deepEqual(
-    calls.map(({ command }) => command),
-    ["py", "python"],
-  );
-  assert.deepEqual(calls[0].args.slice(0, 2), [
-    "-3",
-    join(root, ".trellis", "scripts", "task.py"),
-  ]);
-  assert.equal(calls[1].options.env.DSH_SESSION_ID, "abc def");
-  assert.equal(calls[1].options.env.DSH_SHELL, "1");
+    assert.equal(result.kind, "success");
+    assert.deepEqual(
+      calls.map(({ command }) => command),
+      ["py", "python"],
+    );
+    assert.deepEqual(calls[0].args.slice(0, 2), [
+      "-3",
+      join(root, ".trellis", "scripts", "task.py"),
+    ]);
+    assert.equal(calls[1].options.env.DSH_SESSION_ID, "abc def");
+    assert.equal(calls[1].options.env.DSH_SHELL, "1");
+    assert.equal(calls[1].options.env.TRELLIS_CONTEXT_ID, "dsh_abc_def");
+    assert.equal(
+      calls[1].options.env.DSH_TRELLIS_CONTEXT_ID,
+      "dsh_abc_def",
+    );
+  } finally {
+    if (previousOuterContext === undefined) {
+      delete process.env.TRELLIS_CONTEXT_ID;
+    } else {
+      process.env.TRELLIS_CONTEXT_ID = previousOuterContext;
+    }
+  }
 });
 
 test("trellis-finish is read-only and command disposal unregisters both commands", async () => {

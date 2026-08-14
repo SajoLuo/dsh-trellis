@@ -3,7 +3,7 @@
 DeepSeek Harness (dsh) host 插件：把 [Trellis](https://github.com/mindfold-ai/Trellis) 工作流带进 dsh，并尽量沿用 DSH 原生能力补齐 Codex / Claude Code 级体验：
 
 1. **每轮 workflow-state 面包屑注入** — 在每个 `agent/pre-step`，解析项目 `.trellis/workflow.md` 的 `[workflow-state:*]` 块 + 活跃任务状态（no_task / planning / in_progress），把对应面包屑注入会话（与 `dsh-agent-instructions` 的注入管道相同）。未变化不重复注入；被压缩后自动重注入；提示词里出现独立单词 `no-trellis` 可跳过当轮。
-2. **原生会话上下文身份** — 直接使用 DSH 自动注入每个 agent shell 的 `DSH_SESSION_ID`，让 `task.py start/create/current` 解析到会话级 active-task 指针；插件命令启动的子进程也转发同一个原生 ID，不另造身份层。
+2. **隔离的原生会话上下文身份** — 从当前 agent 的 DSH 原生 session header 生成受管的 `DSH_TRELLIS_CONTEXT_ID`，让 `task.py start/create/current` 解析到会话级 active-task 指针，并覆盖从外层 Claude/Codex Trellis 会话继承的普通 `TRELLIS_CONTEXT_ID`；插件命令启动的子进程也显式使用同一个 DSH 身份。
 3. **原生子代理同步** — 安装插件后，Trellis 角色可用 DSH continuable 后台子代理；主会话先继续独立工作，耗尽后调用事件驱动的 `trellis_wait`。它监听 DSH 的 `subagent/end`，只在原生 settlement notice 已排入父会话后返回，不用 shell sleep、轮询或 `job_output`。
 4. **`/trellis` 命令** — `/trellis-status`（活跃任务 + git 状态）、`/trellis-finish`（只读检查 + 安全收尾清单，不提前清 active-task 指针）。命令输出不进模型历史；真正的会话收尾走技能面 `/trellis-finish-work`，由技能先归档再写 journal。
 
@@ -46,7 +46,7 @@ dsh plugin --profile tui add file:C:/path/to/dsh-trellis
 
 - **状态解析**（`lib/workflow.js`）：向上找项目根 → 读 `.trellis/workflow.md` 解析状态块 → 先看当前会话指针 `.trellis/.runtime/sessions/dsh_<id>.json`。当前指针缺失时只允许 Trellis 官方的“唯一 session 文件”回退；存在 0 个或 2 个以上 session 文件就拒绝猜测，避免多个 DSH 窗口串任务。
 - **注入去重**：面包屑带 digest，与最近一次注入相同且仍在可见表面则不重复注入。
-- **会话身份**：DSH 原生提供 `DSH_SESSION_ID = agent.session.header.id`；Trellis 在读指针时统一做 `dsh_` 前缀和 sanitize。主会话与子代理各自保留 DSH 的隔离身份，子代理通过派发 prompt 首行的 `Active task:` 和角色 prelude 取得父任务上下文。
+- **会话身份**：DSH 原生提供 `DSH_SESSION_ID = agent.session.header.id`，插件通过 `shellEnv` 为每次执行生成 `DSH_TRELLIS_CONTEXT_ID = dsh_<session-id>`。DSH 会先丢弃环境中已有的 `DSH_*` 再重建受管命名空间，因此这个值不会来自外层 host；Trellis beta 适配在普通 `TRELLIS_CONTEXT_ID` 之前解析它，避免嵌套启动时串到外层任务。主会话与子代理仍各自保留 DSH 身份，子代理通过派发 prompt 首行的 `Active task:` 和角色 prelude 取得父任务上下文。
 - **取消与生命周期**：命令和 `trellis_wait` 都继承 DSH invocation 的 `AbortSignal`；取消后命令不会继续尝试另一个 Python 启动器，等待工具也会立即注销临时事件监听器。插件卸载时只注销自己的命令、工具和监听器。
 - **子代理并发**：workflow 只有在发现 `trellis_wait` 时才使用 DSH 原生 continuable 后台 `subagent`。主会话并行做独立工作；需要汇合时调用一次 `trellis_wait <subagent_id>` 等待原生结算事件。没有该工具时，首次派发直接设置 `run_in_background: false`，绝不留下无法事件汇合的后台子代理。
 
