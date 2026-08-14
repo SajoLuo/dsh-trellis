@@ -27,6 +27,15 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 dsh plugin --profile tui add file:C:/path/to/dsh-trellis
 ```
 
+`file:` 插件会作为 profile 内的 pnpm 快照安装；拉取插件源码更新后，尤其是版本新增了文件时，需要刷新对应 profile 的安装：
+
+```powershell
+dsh plugin --profile headless remove dsh-trellis
+dsh plugin --profile headless add file:C:/path/to/dsh-trellis
+```
+
+对 `web` / `tui` profile 使用同样的 remove + add，并在该 profile 下次启动时生效。
+
 配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。插件目标版本为 DSH `0.1.0-rc.6`；升级 DSH 时应重跑本仓测试。
 
 ## 配置
