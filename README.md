@@ -14,27 +14,33 @@ DeepSeek Harness (dsh) host 插件：把 [Trellis](https://github.com/mindfold-a
 ## 安装
 
 ```powershell
-# 获取源码
+# 装进实际使用的 profile（均在该 profile 下次启动时生效）
+dsh plugin --profile web add dsh-trellis
+dsh plugin --profile headless add dsh-trellis
+
+# 如果你维护独立的 tui profile，也需要装进该 profile
+dsh plugin --profile tui add dsh-trellis
+```
+
+`dsh plugin` 会把插件安装到指定 profile；每个实际使用的 profile 都需要单独安装。升级到 npm 上的最新版本：
+
+```powershell
+dsh plugin --profile web update dsh-trellis
+dsh plugin --profile headless update dsh-trellis
+```
+
+对 `tui` profile 使用同样的 update，并在该 profile 下次启动时生效。
+
+如果要从源码开发或验证尚未发布的版本，可以改用本地 `file:` 安装：
+
+```powershell
 git clone https://github.com/SajoLuo/dsh-trellis.git
 cd dsh-trellis
 pnpm install --frozen-lockfile
-
-# 装进实际使用的 profile（均在该 profile 下次启动时生效）
-dsh plugin --profile web add file:C:/path/to/dsh-trellis
-dsh plugin --profile headless add file:C:/path/to/dsh-trellis
-
-# 如果你维护独立的 tui profile，也需要装进该 profile
-dsh plugin --profile tui add file:C:/path/to/dsh-trellis
-```
-
-`file:` 插件会作为 profile 内的 pnpm 快照安装；拉取插件源码更新后，尤其是版本新增了文件时，需要刷新对应 profile 的安装：
-
-```powershell
-dsh plugin --profile headless remove dsh-trellis
 dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 ```
 
-对 `web` / `tui` profile 使用同样的 remove + add，并在该 profile 下次启动时生效。
+`file:` 插件会作为 profile 内的 pnpm 快照安装；拉取源码更新后，尤其是版本新增文件时，需要先 remove 再 add 刷新该 profile。
 
 配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。插件目标版本为 DSH `0.1.0-rc.6`；升级 DSH 时应重跑本仓测试。
 

@@ -21,6 +21,16 @@
   "bugs": {
     "url": "https://github.com/SajoLuo/dsh-trellis/issues"
   },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "trellis",
+    "workflow",
+    "ai-agent"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@10.33.0",
   "dsh": {
     "bundle": {
@@ -37,6 +47,26 @@
     "@deepseek-ai/dsh-shell-env": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-commands": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-shell-env": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
