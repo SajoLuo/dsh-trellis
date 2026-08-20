@@ -1,6 +1,6 @@
 {
   "name": "dsh-trellis",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Trellis workflow integration for DeepSeek Harness: per-turn workflow-state breadcrumbs, utility commands, and native session identity.",
   "type": "module",
   "main": "lib/index.js",

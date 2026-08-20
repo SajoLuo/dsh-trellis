@@ -18,6 +18,10 @@ test("package declares and emits a DSH Web client factory", async () => {
 
   let declaration;
   const source = await readFile(new URL("../lib/client.js", import.meta.url), "utf8");
+  const sourceMap = JSON.parse(
+    await readFile(new URL("../lib/client.js.map", import.meta.url), "utf8"),
+  );
+  assert.equal(sourceMap.sourcesContent, undefined);
   vm.runInNewContext(source, {
     window: {
       __ModuleLoader__: {

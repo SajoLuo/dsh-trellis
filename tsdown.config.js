@@ -19,6 +19,10 @@ export default defineConfig({
   },
   outputOptions: {
     entryFileNames: "client.js",
+    // Keep committed/published maps reproducible across LF and CRLF checkouts.
+    // The source paths still resolve in a development checkout; embedding the
+    // source text would make Windows prepack output differ byte-for-byte.
+    sourcemapExcludeSources: true,
     banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(id)}, factory: (require) => {`,
     footer: "return module.exports; } });",
     intro: "var module = { exports: {} }; var exports = module.exports;",
