@@ -43,6 +43,8 @@ const resolved = {
 
 const invocation = {
   agent: { session: { header: { cwd: join(root, "src"), id: "session one" } } },
+  rawInput: "",
+  attachments: [],
   signal: new AbortController().signal,
 };
 
@@ -121,6 +123,8 @@ test("trellis-finish is read-only and command disposal unregisters both commands
   const result = await commands.get("trellis-finish").handler(invocation);
   assert.equal(result.kind, "success");
   assert.match(result.text, /did not clear or archive anything/);
+  assert.equal(commands.get("trellis-status").recordInput, false);
+  assert.equal(commands.get("trellis-finish").recordInput, false);
   assert.deepEqual(calls[0].args.slice(-2), ["current", "--source"]);
   assert.equal(calls[0].options.env.DSH_SESSION_ID, "session one");
   assert.equal(calls[0].options.env.DSH_SHELL, "1");
@@ -129,6 +133,33 @@ test("trellis-finish is read-only and command disposal unregisters both commands
 
   dispose();
   assert.deepEqual(disposed.sort(), ["trellis-finish", "trellis-status"]);
+});
+
+test("zero-input commands reject rc.8 command envelope payloads before touching the project", async () => {
+  const { ctx, commands } = commandHarness();
+  let executed = false;
+  registerCommands(ctx, resolved, {
+    fs: projectFs(),
+    async execFile() {
+      executed = true;
+      return { stdout: "", stderr: "" };
+    },
+  });
+
+  const withText = await commands.get("trellis-status").handler({
+    ...invocation,
+    rawInput: " unexpected",
+  });
+  const withImage = await commands.get("trellis-finish").handler({
+    ...invocation,
+    attachments: [{ type: "image", mimeType: "image/png", data: "abc" }],
+  });
+
+  assert.equal(withText.kind, "error");
+  assert.match(withText.text, /does not accept arguments/);
+  assert.equal(withImage.kind, "error");
+  assert.match(withImage.text, /image attachments/);
+  assert.equal(executed, false);
 });
 
 test("an aborted native command signal cancels execution without Python fallback", async () => {

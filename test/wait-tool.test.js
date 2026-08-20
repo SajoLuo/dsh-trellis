@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { registerWaitTool } from "../lib/wait-tool.js";
+import { registerWaitTool, settlementOutcome } from "../lib/wait-tool.js";
 
 function harness(entries) {
   let tool;
@@ -61,11 +61,23 @@ test("trellis_wait resolves from the native settlement event and cleans up", asy
   assert.equal(state.listenerCount(), 1);
   state.emit({ id: "some-other-child", stopReason: "completed" });
   assert.equal(state.listenerCount(), 1);
-  state.emit({ id: runningChild.id, stopReason: "completed" });
+  state.emit({
+    id: runningChild.id,
+    runId: "run-1",
+    provider: "spawn",
+    local: true,
+    stopReason: "completed",
+    lastAssistantMessage: [{ type: "text", text: "done" }],
+  });
   assert.deepEqual(await pending, {
     subagentId: runningChild.id,
     state: "settled",
+    outcome: "completed",
     stopReason: "completed",
+    runId: "run-1",
+    provider: "spawn",
+    assistantOutputBlocks: 1,
+    settlementNoticeQueued: true,
   });
   assert.equal(state.listenerCount(), 0);
 });
@@ -80,10 +92,45 @@ test("trellis_wait returns immediately for an inactive direct child", async () =
     {
       subagentId: runningChild.id,
       state: "already-inactive",
+      outcome: "unknown",
       stopReason: "unknown",
+      runId: "",
+      provider: "",
+      assistantOutputBlocks: 0,
+      settlementNoticeQueued: false,
     },
   );
   assert.equal(state.listenerCount(), 0);
+});
+
+test("trellis_wait classifies non-completed rc.8 settlement reasons as failed gates", async () => {
+  const state = harness([runningChild]);
+  const pending = state.tool.execute(
+    { subagent_id: runningChild.id },
+    { agent: state.parent, signal: new AbortController().signal },
+  );
+  await Promise.resolve();
+  state.emit({
+    id: runningChild.id,
+    runId: "run-failed",
+    provider: "fork",
+    stopReason: "max-tokens",
+  });
+  const result = await pending;
+  assert.equal(result.outcome, "failed");
+  assert.equal(result.stopReason, "max-tokens");
+  assert.match(
+    state.tool.output.render({}, result)[0].text,
+    /do not treat this gate as passed/,
+  );
+});
+
+test("settlementOutcome remains fail-closed for extension stop reasons", () => {
+  assert.equal(settlementOutcome("completed"), "completed");
+  assert.equal(settlementOutcome("aborted"), "aborted");
+  assert.equal(settlementOutcome("unknown"), "unknown");
+  assert.equal(settlementOutcome("refusal"), "failed");
+  assert.equal(settlementOutcome("provider-new-reason"), "failed");
 });
 
 test("trellis_wait rejects unknown or non-direct agents without leaking a listener", async () => {
