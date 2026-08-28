@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { apply } from "../lib/index.js";
+import { apply, insertBreadcrumbDecision } from "../lib/index.js";
 
 function harness({ settings = false } = {}) {
   const effects = [];
@@ -11,6 +11,9 @@ function harness({ settings = false } = {}) {
     value: {},
     watcher: undefined,
     registration: undefined,
+  };
+  const ctx = {
+    fiber: { state: 0 },
   };
   const settingsCtx = {
     settings: {
@@ -29,12 +32,12 @@ function harness({ settings = false } = {}) {
       },
     },
     effect(callback, label) {
-      effects.push({ label, dispose: callback() });
+      effects.push({ owner: "settings", label, dispose: callback() });
     },
   };
-  const ctx = {
+  Object.assign(ctx, {
     effect(callback, label) {
-      effects.push({ label, dispose: callback() });
+      effects.push({ owner: "plugin", label, dispose: callback() });
     },
     on(event, listener) {
       listeners.push({ event, listener });
@@ -67,7 +70,7 @@ function harness({ settings = false } = {}) {
         return () => active.delete(`tool:${tool.name}`);
       },
     },
-  };
+  });
   return {
     ctx,
     effects,
@@ -78,6 +81,18 @@ function harness({ settings = false } = {}) {
     publishSettings(value) {
       settingsState.value = value;
       settingsState.watcher?.();
+    },
+    detachSettings({ unloading = false } = {}) {
+      if (unloading) ctx.fiber.state = 5;
+      for (const effect of effects.filter(({ owner }) => owner === "settings")) {
+        effect.dispose();
+      }
+    },
+    disposePlugin() {
+      ctx.fiber.state = 5;
+      for (const effect of effects.filter(({ owner }) => owner === "plugin")) {
+        effect.dispose();
+      }
     },
   };
 }
@@ -116,15 +131,16 @@ test("enabled plugin registers commands, wait tool, one pre-step listener, and d
   assert.deepEqual([...state.active], []);
 });
 
-test("rc.8 settings namespace remounts the plugin from saved live values", () => {
+test("settings namespace remounts the plugin from saved values", () => {
   const state = harness({ settings: true });
   apply(state.ctx, { enabled: false, maxBytes: 1024 });
 
   assert.equal(state.settingsState.registration.namespace, "dsh-trellis");
-  assert.equal(state.settingsState.registration.options.applies, "live");
-  assert.deepEqual(state.settingsState.registration.options.base, {
-    enabled: false,
-    maxBytes: 1024,
+  assert.deepEqual(state.settingsState.registration.options, {
+    base: {
+      enabled: false,
+      maxBytes: 1024,
+    },
   });
   assert.deepEqual([...state.active], []);
 
@@ -146,4 +162,49 @@ test("rc.8 settings namespace remounts the plugin from saved live values", () =>
 
   state.publishSettings({ enabled: false });
   assert.deepEqual([...state.active], []);
+});
+
+test("settings provider detach falls back to the profile composition entry", () => {
+  const state = harness({ settings: true });
+  apply(state.ctx, { enabled: false });
+
+  state.publishSettings({ enabled: true, commandsEnabled: false });
+  assert.deepEqual([...state.active].sort(), [
+    "listener:agent/pre-step",
+    "shell-env:dsh-trellis-session",
+    "tool:trellis_wait",
+  ]);
+
+  state.detachSettings();
+  assert.deepEqual([...state.active], []);
+});
+
+test("plugin teardown does not remount the profile entry while settings detaches", () => {
+  const state = harness({ settings: true });
+  apply(state.ctx, { enabled: false });
+
+  state.publishSettings({ enabled: true, commandsEnabled: false });
+  const mounted = [...state.active].sort();
+  state.detachSettings({ unloading: true });
+  assert.deepEqual([...state.active].sort(), mounted);
+
+  state.disposePlugin();
+  assert.deepEqual([...state.active], []);
+});
+
+test("breadcrumb insertion preserves host-owned pre-step decision fields", () => {
+  const claimed = { role: "system", content: "workspace instructions" };
+  const tail = { role: "user", content: "task" };
+  const desired = { role: "user", content: "[workflow-state:in_progress]" };
+  const decision = {
+    kind: "enter",
+    messages: [claimed, tail],
+    startsRequestSeries: true,
+  };
+
+  assert.deepEqual(insertBreadcrumbDecision(decision, [claimed], desired), {
+    kind: "enter",
+    messages: [claimed, desired, tail],
+    startsRequestSeries: true,
+  });
 });

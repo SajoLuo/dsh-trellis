@@ -44,12 +44,12 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 
 `file:` 插件会作为 profile 内的 pnpm 快照安装；拉取源码更新后，尤其是版本新增文件时，需要先 remove 再 add 刷新该 profile。
 
-配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。插件以 DSH `0.1.0-rc.8` 作为开发/测试基线；Host 功能的 peer dependency 下限仍是 `rc.6`，用于兼容已安装的旧 profile，Web 配置卡片则只在具备 settings/client surface 的 rc.8 profile 中加载。
+配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。v0.1.3 的 Host peer 范围显式覆盖 DSH `0.1.0-rc.6+`、`0.1.1-rc.1+` 与 `0.1.2-alpha.1+` 三条已知预发布线，避免 npm 的 prerelease 语义把新版 Host 误判为不兼容；本仓开发/测试依赖仍固定在 `0.1.0-rc.8`，Web 配置卡片只在具备 settings/client surface 的 profile 中加载。
 
 ### DSH rc.8 对齐说明
 
 - 已采用：command lifecycle 的 `recordInput`、command attachment envelope 的 fail-closed 输入检查、`subagent/end` 的 run/provider/final-output 元数据、rc.8 的 report-before-settlement 与 idle-parent 原生唤醒语义。
-- 已接入：Host `dsh-trellis` settings namespace 与 `dsh.client` 浏览器卡片。保存值写入 DSH 的 `settings.yaml` 用户层，并实时重挂插件 runtime；rc.6 不具备该服务时自动退回原有 loader 配置，不影响 Host 插件加载。
+- 已接入：Host `dsh-trellis` settings namespace 与 `dsh.client` 浏览器卡片。保存值写入 DSH 的 `settings.yaml` 用户层，并实时重挂插件 runtime；settings provider 单独重载时退回 loader 配置，插件自身卸载时则不会错误重挂 runtime。没有 settings 服务的 profile 继续使用原有 loader 配置。
 - 保持可选：`trellis_wait` 仍是“父会话还在当前轮里、需要明确同步点”时的工具；已经 yield 的父会话直接由 DSH 原生 settlement notice 唤醒。
 - 暂不接入：Agent Teams 在 rc.8 仍位于 `packages/experimental` 且不随正式 npm family 发布。Trellis 不应为此引入私有依赖；等它进入公开稳定面后再评估共享 task board / mailbox 映射。
 
