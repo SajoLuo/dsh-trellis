@@ -1,6 +1,6 @@
 {
   "name": "dsh-trellis",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Trellis workflow integration for DeepSeek Harness: per-turn workflow-state breadcrumbs, utility commands, and native session identity.",
   "type": "module",
   "main": "lib/index.js",
@@ -53,33 +53,20 @@
     "prepack": "pnpm run build:client"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-commands": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1",
-    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.2-alpha.1",
-    "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.2-alpha.1",
-    "@deepseek-ai/dsh-client-ui-settings-plugins": "^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.2-alpha.1",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1",
-    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1",
-    "@deepseek-ai/dsh-shell-env": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1",
-    "@deepseek-ai/dsh-subagent": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1",
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "react": "^18.2.0"
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-commands": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.3-alpha.1 || ^0.1.5-alpha.1",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.3-alpha.1 || ^0.1.5-alpha.1",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.3-alpha.1 || ^0.1.5-alpha.1",
+    "@deepseek-ai/dsh-shell-env": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.3-alpha.1 || ^0.1.5-alpha.1",
+    "@deepseek-ai/dsh-subagent": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.3-alpha.1 || ^0.1.5-alpha.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.3-alpha.1 || ^0.1.5-alpha.1",
+    "@deepseek-ai/schemastery": "^3.18.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
       "optional": true
     },
     "@deepseek-ai/dsh-commands": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-client-locale": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-client-ui-settings": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-client-ui-settings-plugins": {
       "optional": true
     },
     "@deepseek-ai/dsh-llm": {
@@ -99,21 +86,36 @@
     },
     "@deepseek-ai/schemastery": {
       "optional": true
-    },
-    "react": {
-      "optional": true
     }
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-commands": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-llm": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-settings": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-shell-env": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-subagent": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "react": "^18.2.0",
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-attachment": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-agent": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-client-locale": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-client-ui-settings-plugins": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-code-runtime": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-commands": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-home-paths": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-invariants": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-llm": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-sandbox": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-scope": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-session": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-session-persistence": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-session-projection": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-shell": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-settings": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-shell-env": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-subprocess": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-subagent": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-system-prompt": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-tools": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-user-approval": "0.1.5-alpha.2",
+    "@deepseek-ai/dsh-util-time": "0.1.5-alpha.2",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "react": "19.2.8",
     "tsdown": "^0.22.2"
   }
 }

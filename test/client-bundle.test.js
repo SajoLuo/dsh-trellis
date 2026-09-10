@@ -15,6 +15,11 @@ test("package declares and emits a DSH Web client factory", async () => {
   });
   assert.equal(manifest.exports["./client"], "./lib/client.js");
   assert.equal(manifest.exports["./package.json"], "./package.json");
+  for (const dependency of [...manifest.dsh.client.inject, "react"]) {
+    assert.equal(manifest.peerDependencies[dependency], undefined);
+    assert.equal(manifest.peerDependenciesMeta[dependency], undefined);
+    assert.notEqual(manifest.devDependencies[dependency], undefined);
+  }
 
   let declaration;
   const source = await readFile(new URL("../lib/client.js", import.meta.url), "utf8");

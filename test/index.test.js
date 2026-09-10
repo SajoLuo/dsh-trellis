@@ -30,6 +30,19 @@ function harness({ settings = false } = {}) {
           },
         };
       },
+      installSection(owner, namespace, schema, entry, hooks) {
+        const scope = this.register(namespace, schema, { base: entry });
+        hooks.setSource(() => scope.get());
+        hooks.onChange();
+        settingsCtx.effect(() => () => {
+          if (owner.fiber.state === 5) return;
+          hooks.setSource(() => entry);
+          hooks.onChange();
+        });
+        scope.watch(() => {
+          if (owner.fiber.state !== 5) hooks.onChange();
+        });
+      },
     },
     effect(callback, label) {
       effects.push({ owner: "settings", label, dispose: callback() });
