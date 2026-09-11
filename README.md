@@ -44,11 +44,15 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 
 `file:` 插件会作为 profile 内的 pnpm 快照安装；拉取源码更新后，尤其是版本新增文件时，需要先 remove 再 add 刷新该 profile。
 
-配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。Host peer 范围显式覆盖 DSH `0.1.0-rc.6+`、`0.1.1-rc.1+`、`0.1.2-alpha.1+`、`0.1.3-alpha.1+` 与 `0.1.5-alpha.1+` 五条已知预发布线，避免 npm 的 prerelease 语义把新版 Host 误判为不兼容；本仓开发与回归基线固定在 `0.1.5-alpha.2`。Host 侧 Settings 桥同时兼容旧版包级 helper 与当前 provider 方法，Web 配置卡片只在具备 settings/client surface 的 profile 中加载。
+配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。Host peer 范围显式覆盖 DSH `0.1.0-rc.6+`、`0.1.1-rc.1+`、`0.1.2-alpha.1+`、`0.1.3-alpha.1+` 与 `0.1.5-alpha.1+` 五条已知预发布线，避免 npm 的 prerelease 语义把新版 Host 误判为不兼容；本仓开发与回归基线固定在 `0.1.5-rc.2`。Host 侧 Settings 桥同时兼容旧版包级 helper 与当前 provider 方法，Web 配置卡片只在具备 settings/client surface 的 profile 中加载。
 
-### DSH 0.1.5-alpha.2 对齐说明
+运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
 
-- 已适配：Session V3 通过 `eventAt()` / `snapshotEvents()` 读取可见事件，并保留旧 session collection 回退；插件不直接读取磁盘会话日志，因此不需要自行迁移 V3 文件格式。
+### DSH 0.1.5-rc.2 对齐说明
+
+- 已迁移：面包屑使用 `sessionProjections` 的纯 fold，在恢复或分叉时重建状态、按已提交事件增量更新，不再调用 Session 的 `eventAt()` / `snapshotEvents()` / `ownEvents()` 或访问旧事件集合。当前 DSH 注册 Host-only projection；旧版 registry 通过 projection snapshot 兼容，仅包含序号和 payload 哈希，不传输工作流正文。
+- 已修复：恢复会话、插件或 Settings 重载后的首轮也会去重；以最后一条仍可见的面包屑判断，避免 A → B → A 状态切换被旧记录误抑制。压缩移除后会重新注入，字节预算变化导致的正文变化也会重新注入。
+- 前瞻适配：[上游同步历史读取弃用决策](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/architecture/2026-09-09-deprecate-synchronous-session-event-reads.md) 已进入主线，但 RC.2 仍提供这些方法；本次提前解除依赖，不代表 RC.2 已删除接口。插件不负责迁移磁盘会话格式。
 - 已核对：插件不依赖 0.1.5 移除的 `ctx.agent` 或可构造 `Inbox`；pre-step 从事件载荷取得 agent，工具从 `exec.agent` 取得调用方，待处理消息只使用 `agent.inbox` 当前公开的 `nextStep`、`prepend`、`replace` 与 `remove`。
 - 已采用：command lifecycle 的 `recordInput`、command attachment envelope 的 fail-closed 输入检查、`subagent/end` 的 run/provider/final-output 元数据，以及 report-before-settlement 与 idle-parent 原生唤醒语义。
 - 已接入：Host `dsh-trellis` settings namespace 与 `dsh.client` 浏览器卡片。保存值写入 DSH 的 `settings.yaml` 用户层，并实时重挂插件 runtime；settings provider 单独重载时退回 loader 配置，插件自身卸载时则不会错误重挂 runtime。没有 settings 服务的 profile 继续使用原有 loader 配置。当前可选 Settings 生命周期由 `settings.installSection()` 承担；插件仍在运行时兼容旧版 helper。
@@ -74,7 +78,7 @@ Headless、rc.6 或需要声明部署默认值时，仍可在 profile 的 `cordi
 ## 工作原理
 
 - **状态解析**（`lib/workflow.js`）：向上找项目根 → 读 `.trellis/workflow.md` 解析状态块 → 先看当前会话指针 `.trellis/.runtime/sessions/dsh_<id>.json`。当前指针缺失时只允许 Trellis 官方的“唯一 session 文件”回退；存在 0 个或 2 个以上 session 文件就拒绝猜测，避免多个 DSH 窗口串任务。
-- **注入去重**：面包屑带 digest，与最近一次注入相同且仍在可见表面则不重复注入。
+- **注入去重**（`lib/breadcrumb-projection.js`）：投影仅保存面包屑的事件序号和 source/content 指纹，与 DSH 已维护的 `session.surface.nodes` 一起确定最后可见面包屑。恢复、分叉和重载均从 projection 重建；不缓存“本进程最后注入”的临时判断，也不扫描完整事件历史。
 - **会话身份**：DSH 原生提供 `DSH_SESSION_ID = agent.session.header.id`，并先丢弃环境中已有的 `DSH_*` 再重建受管命名空间。Trellis beta 因此会在同时看到 `DSH_SHELL=1` 与 `DSH_SESSION_ID` 时优先解析当前 DSH 身份，即使没有插件也不会被外层 host 继承的 `TRELLIS_CONTEXT_ID` 串任务。插件通过 `shellEnv` 为每次执行额外生成 `DSH_TRELLIS_CONTEXT_ID = dsh_<session-id>`，用于转发可能不同于 shell 自身 session 的子代理身份；主会话与子代理仍各自保留 DSH 身份，子代理通过派发 prompt 首行的 `Active task:` 和角色 prelude 取得父任务上下文。
 - **Headless 会话**：每次 `dsh --profile headless` 调用都是新的 DSH session。需要跨轮保留 active-task 指针时，应保持同一会话或显式 resume 返回的 session id，不能把多个独立 headless 调用当成同一 session。
 - **取消与生命周期**：命令和 `trellis_wait` 都继承 DSH invocation 的 `AbortSignal`；取消后命令不会继续尝试另一个 Python 启动器，等待工具也会立即注销临时事件监听器。`trellis_wait` 只在收到配对的结算事件时声明 `settlementNoticeQueued=true`；仅从 catalog 看到 inactive 时保持 `unknown`，不猜任务通过。插件卸载时只注销自己的命令、工具和监听器。
@@ -87,6 +91,8 @@ pnpm install
 pnpm run build:client
 pnpm test    # node --test test/*.test.js
 ```
+
+GitHub Actions 在 Windows / Linux 的 Node 24 环境执行锁定安装、客户端构建、测试和打包检查；其中包含真实 Session/projection 服务的增量驱动、恢复、分叉、压缩和 checkpoint 回归。
 
 Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 生成 DSH lazy-CJS factory 到 `lib/client.js`。`pnpm pack` 会在 prepack 阶段自动重建客户端 bundle。
 

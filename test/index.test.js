@@ -1,8 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { apply, insertBreadcrumbDecision } from "../lib/index.js";
+import { fileURLToPath } from "node:url";
+import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { BREADCRUMB_PROJECTION_KEY as KEY } from "../lib/breadcrumb-projection.js";
+import { isBreadcrumbMessage } from "../lib/breadcrumb.js";
+import { sessionRuntime } from "./helpers/session-runtime.js";
+import { apply, inject, insertBreadcrumbDecision } from "../lib/index.js";
 
-function harness({ settings = false } = {}) {
+function harness({ settings = false, projectionRegistry } = {}) {
   const effects = [];
   const listeners = [];
   const registrations = [];
@@ -69,6 +74,20 @@ function harness({ settings = false } = {}) {
       },
     },
     subagents: {},
+    sessionProjections: {
+      register(definition) {
+        registrations.push(`projection:${definition.key}`);
+        active.add(`projection:${definition.key}`);
+        const dispose = projectionRegistry?.register(definition);
+        return () => {
+          active.delete(`projection:${definition.key}`);
+          dispose?.();
+        };
+      },
+      stateOf(session, key) {
+        return projectionRegistry ? projectionRegistry.stateOf(session, key) : {};
+      },
+    },
     shellEnv: {
       register(contributor) {
         registrations.push(`shell-env:${contributor.name}`);
@@ -136,6 +155,7 @@ test("enabled plugin registers commands, wait tool, one pre-step listener, and d
   assert.deepEqual(state.registrations.filter((entry) => !entry.startsWith("inject:")).sort(), [
     "command:trellis-finish",
     "command:trellis-status",
+    `projection:${KEY}`,
     "shell-env:dsh-trellis-session",
     "tool:trellis_wait",
   ]);
@@ -160,6 +180,7 @@ test("settings namespace remounts the plugin from saved values", () => {
   state.publishSettings({ enabled: true, commandsEnabled: false });
   assert.deepEqual([...state.active].sort(), [
     "listener:agent/pre-step",
+    `projection:${KEY}`,
     "shell-env:dsh-trellis-session",
     "tool:trellis_wait",
   ]);
@@ -169,6 +190,7 @@ test("settings namespace remounts the plugin from saved values", () => {
     "command:trellis-finish",
     "command:trellis-status",
     "listener:agent/pre-step",
+    `projection:${KEY}`,
     "shell-env:dsh-trellis-session",
     "tool:trellis_wait",
   ]);
@@ -184,6 +206,7 @@ test("settings provider detach falls back to the profile composition entry", () 
   state.publishSettings({ enabled: true, commandsEnabled: false });
   assert.deepEqual([...state.active].sort(), [
     "listener:agent/pre-step",
+    `projection:${KEY}`,
     "shell-env:dsh-trellis-session",
     "tool:trellis_wait",
   ]);
@@ -220,4 +243,109 @@ test("breadcrumb insertion preserves host-owned pre-step decision fields", () =>
     messages: [claimed, desired, tail],
     startsRequestSeries: true,
   });
+});
+
+const prompt = (text) => createUserMessage({ content: [{ type: "text", text }] });
+const fixtureCwd = fileURLToPath(new URL("./fixtures/breadcrumb-project", import.meta.url));
+const fixtureConfig = { projectRootMarkers: [".trellis"], commandsEnabled: false };
+
+function inbox(initial = []) {
+  return {
+    nextStep: [...initial],
+    prepend(_lane, message) { this.nextStep.unshift(message); },
+    replace(id, message) { this.nextStep[this.nextStep.findIndex((entry) => entry.id === id)] = message; },
+    remove(id) { this.nextStep = this.nextStep.filter((entry) => entry.id !== id); },
+  };
+}
+
+async function preStepRuntime(t, config = {}) {
+  const ctx = await sessionRuntime(t);
+  const state = harness({ settings: true, projectionRegistry: ctx.sessionProjections });
+  apply(state.ctx, { ...fixtureConfig, ...config });
+  t.after(() => state.disposePlugin());
+  const agent = {
+    session: ctx.sessions.create("pre-step", { meta: { cwd: fixtureCwd } }),
+    inbox: inbox(),
+  };
+  const run = async ({ messages = [prompt("Continue")], decision, step = 2, signal } = {}) => {
+    const input = decision ?? { kind: "enter", messages, startsRequestSeries: true };
+    const listener = state.listeners.filter((entry) => entry.event === "agent/pre-step").at(-1).listener;
+    return listener({ agent, messages, step, signal }, async () => input);
+  };
+  return { ctx, state, agent, run };
+}
+
+test("plugin declares the projection service as a required host capability", () => {
+  assert.ok(inject.includes("sessionProjections"));
+});
+
+test("pre-step inserts once, clears stale inbox, and dedupes immediately after settings remount", async (t) => {
+  const { ctx, state, agent, run } = await preStepRuntime(t);
+  const first = await run();
+  const message = first.messages.find(isBreadcrumbMessage);
+  assert.ok(message);
+  assert.equal(first.startsRequestSeries, true);
+  agent.session.append("user/message", message, { surfaceOp: "append" });
+  const unrelated = prompt("Keep this queued prompt");
+  agent.inbox = inbox([message, unrelated]);
+  assert.equal((await run()).messages.some(isBreadcrumbMessage), false);
+  assert.deepEqual(agent.inbox.nextStep, [unrelated]);
+  state.publishSettings({ ...fixtureConfig, enabled: false });
+  assert.equal(ctx.sessionProjections.stateOf(agent.session, KEY), undefined);
+  state.publishSettings({ ...fixtureConfig, enabled: true });
+  assert.equal((await run()).messages.some(isBreadcrumbMessage), false);
+
+  state.publishSettings({ ...fixtureConfig, maxBytes: 24 });
+  const smaller = (await run()).messages.find(isBreadcrumbMessage);
+  assert.ok(smaller);
+  assert.notDeepEqual(smaller.content, message.content);
+  assert.equal(smaller.source.digest, message.source.digest);
+});
+
+test("pre-step reinjects after compaction and dedupes a newly resumed session", async (t) => {
+  const { ctx, agent, run } = await preStepRuntime(t);
+  const first = (await run()).messages.find(isBreadcrumbMessage);
+  agent.session.append("user/message", first, { surfaceOp: "append" });
+  agent.session = ctx.sessions.create("resumed-pre-step", {
+    seed: agent.session.snapshotEvents(), meta: { cwd: fixtureCwd },
+  });
+  assert.equal((await run()).messages.some(isBreadcrumbMessage), false);
+  agent.session.append("user/message", prompt("Compacted"), {
+    surfaceOp: { op: "replace", startSeq: 0, endSeq: 0 }, sourceEventSeqs: [0],
+  });
+  assert.ok((await run()).messages.find(isBreadcrumbMessage));
+});
+
+test("reject and empty first-step decisions keep exactly one pending breadcrumb", async (t) => {
+  const { agent, run } = await preStepRuntime(t);
+  const decision = { kind: "reject", reason: "host-owned reason" };
+  assert.equal(await run({ decision }), decision);
+  const pending = agent.inbox.nextStep[0];
+  assert.ok(isBreadcrumbMessage(pending));
+  await run({ decision });
+  assert.deepEqual(agent.inbox.nextStep, [pending]);
+  const empty = { kind: "enter", messages: [], startsRequestSeries: true };
+  assert.equal(await run({ decision: empty, step: 1 }), empty);
+  assert.deepEqual(agent.inbox.nextStep, [pending]);
+  const result = await run();
+  assert.equal(result.messages.filter(isBreadcrumbMessage).length, 1);
+  assert.deepEqual(agent.inbox.nextStep, []);
+});
+
+test("skip, disabled byte budget, missing project, and cancellation do not inject", async (t) => {
+  const { state, agent, run, ctx } = await preStepRuntime(t);
+  await run({ decision: { kind: "reject" } });
+  assert.equal(agent.inbox.nextStep.length, 1);
+  assert.equal((await run({ messages: [prompt("no-trellis")] })).messages.some(isBreadcrumbMessage), false);
+  assert.equal(agent.inbox.nextStep.length, 0);
+  state.publishSettings({ ...fixtureConfig, maxBytes: 0 });
+  assert.equal((await run()).messages.some(isBreadcrumbMessage), false);
+  state.publishSettings({ ...fixtureConfig, projectRootMarkers: [".nonexistent-trellis-test-marker"] });
+  assert.equal((await run()).messages.some(isBreadcrumbMessage), false);
+  state.publishSettings(fixtureConfig);
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(run({ signal: controller.signal }), { name: "AbortError" });
+  assert.deepEqual(ctx.sessionProjections.stateOf(agent.session, KEY), {});
+  assert.deepEqual(agent.inbox.nextStep, []);
 });
