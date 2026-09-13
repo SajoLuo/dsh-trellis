@@ -2,7 +2,7 @@
 
 DeepSeek Harness (dsh) host 插件：把 [Trellis](https://github.com/mindfold-ai/Trellis) 工作流带进 dsh，并尽量沿用 DSH 原生能力补齐 Codex / Claude Code 级体验：
 
-1. **每轮 workflow-state 面包屑注入** — 在每个 `agent/pre-step`，解析项目 `.trellis/workflow.md` 的 `[workflow-state:*]` 块 + 活跃任务状态（no_task / planning / in_progress），把对应面包屑注入会话（与 `dsh-agent-instructions` 的注入管道相同）。未变化不重复注入；被压缩后自动重注入；提示词里出现独立单词 `no-trellis` 可跳过当轮。
+1. **每轮 workflow-state 面包屑注入** — 在每个 `agent/pre-step`，解析项目 `.trellis/workflow.md` 的 `[workflow-state:*]` 块 + 活跃任务状态（no_task / task_error / planning / in_progress），把对应面包屑注入会话（与 `dsh-agent-instructions` 的注入管道相同）。未变化不重复注入；被压缩后自动重注入；提示词里出现独立单词 `no-trellis` 可跳过当轮。
 2. **隔离的原生会话上下文身份** — 从当前 agent 的 DSH 原生 session header 生成受管的 `DSH_TRELLIS_CONTEXT_ID`，让 `task.py start/create/current` 解析到会话级 active-task 指针，并在子代理身份不同于 shell 自身 session 时优先使用被转发的身份；插件命令启动的子进程也显式使用同一个 DSH 身份。
 3. **原生子代理同步** — 安装插件后，Trellis 角色可用 DSH continuable 后台子代理；主会话先继续独立工作，耗尽后可调用事件驱动的 `trellis_wait`。它监听 DSH 的 `subagent/end`，利用 lifecycle 自带的 run/provider/output-block 元数据返回 `completed / failed / aborted / unknown` 的 fail-closed 结论。`error`、`max-tokens`、`refusal` 和未来未知失败原因都不会被误报成通过。rc.8 在父会话 idle 时也会用原生 settlement notice 唤醒，因此已经结束当前轮时无需额外调用 wait。
 4. **`/trellis` 命令** — `/trellis-status`（活跃任务 + git 状态）、`/trellis-finish`（只读检查 + 安全收尾清单，不提前清 active-task 指针）。命令输出不进模型历史；真正的会话收尾走技能面 `/trellis-finish-work`，由技能先归档再写 journal。rc.8 下两条零输入命令使用 `recordInput: false`，并显式拒绝参数和图片附件，避免静默忽略输入。
@@ -75,9 +75,16 @@ Headless、rc.6 或需要声明部署默认值时，仍可在 profile 的 `cordi
     commandsEnabled: true
 ```
 
+### 0.1.6：Trellis 会话隔离与任务错误兼容
+
+- 跟随 [Trellis #608](https://github.com/mindfold-ai/Trellis/pull/608)：只读取当前 DSH 会话的精确指针。缺少身份或匹配指针时返回 `no_task`，不再借用唯一的其他会话；也不从派发提示词反向建立会话绑定。子代理继续通过明确的 `Active task:` 派发上下文读取任务。
+- 对齐 [官方 `task_error` 工作流](https://github.com/mindfold-ai/marketplace/commit/62a77c9b57fb8bb081c110394bce08b6ebc6e09a)：已绑定任务的 `task.json` 缺失、不可读、JSON 损坏或状态为空时，保留任务路径，提示先修复记录，不把它当成“没有任务”。不修改或删除任何任务与指针。
+- 旧项目没有 `[workflow-state:task_error]` 块时，插件提供保守的修复提示；恢复有效记录后，下一轮自动恢复正常状态。因此无需先更新 Trellis CLI 才能使用本插件的修复。
+- 插件修复不替代 Trellis Python 脚本升级：旧版 `task.py current/finish` 的回退策略、归档恢复和上下文清单检查仍由项目中的 `.trellis/scripts` 实现。
+
 ## 工作原理
 
-- **状态解析**（`lib/workflow.js`）：向上找项目根 → 读 `.trellis/workflow.md` 解析状态块 → 先看当前会话指针 `.trellis/.runtime/sessions/dsh_<id>.json`。当前指针缺失时只允许 Trellis 官方的“唯一 session 文件”回退；存在 0 个或 2 个以上 session 文件就拒绝猜测，避免多个 DSH 窗口串任务。
+- **状态解析**（`lib/workflow.js`）：向上找项目根 → 读 `.trellis/workflow.md` 解析状态块 → 只读当前会话指针 `.trellis/.runtime/sessions/dsh_<id>.json`，不枚举其他会话。指针缺失时返回 `no_task`；指向的任务记录不可读时返回 `task_error` 并保留路径。修复记录或重新绑定任务后会在下一轮重新解析。
 - **注入去重**（`lib/breadcrumb-projection.js`）：投影仅保存面包屑的事件序号和 source/content 指纹，与 DSH 已维护的 `session.surface.nodes` 一起确定最后可见面包屑。恢复、分叉和重载均从 projection 重建；不缓存“本进程最后注入”的临时判断，也不扫描完整事件历史。
 - **会话身份**：DSH 原生提供 `DSH_SESSION_ID = agent.session.header.id`，并先丢弃环境中已有的 `DSH_*` 再重建受管命名空间。Trellis beta 因此会在同时看到 `DSH_SHELL=1` 与 `DSH_SESSION_ID` 时优先解析当前 DSH 身份，即使没有插件也不会被外层 host 继承的 `TRELLIS_CONTEXT_ID` 串任务。插件通过 `shellEnv` 为每次执行额外生成 `DSH_TRELLIS_CONTEXT_ID = dsh_<session-id>`，用于转发可能不同于 shell 自身 session 的子代理身份；主会话与子代理仍各自保留 DSH 身份，子代理通过派发 prompt 首行的 `Active task:` 和角色 prelude 取得父任务上下文。
 - **Headless 会话**：每次 `dsh --profile headless` 调用都是新的 DSH session。需要跨轮保留 active-task 指针时，应保持同一会话或显式 resume 返回的 session id，不能把多个独立 headless 调用当成同一 session。
@@ -92,7 +99,7 @@ pnpm run build:client
 pnpm test    # node --test test/*.test.js
 ```
 
-GitHub Actions 在 Windows / Linux 的 Node 24 环境执行锁定安装、客户端构建、测试和打包检查；其中包含真实 Session/projection 服务的增量驱动、恢复、分叉、压缩和 checkpoint 回归。
+GitHub Actions 在 Windows / Linux 的 Node 24 环境执行锁定安装、客户端构建、测试和打包检查；其中包含真实 Session/projection 服务的增量驱动、恢复、分叉、压缩和 checkpoint 回归，以及真实临时项目中的精确身份绑定、跨会话隔离、任务记录损坏/修复、解绑与 Settings 重载回归。
 
 Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 生成 DSH lazy-CJS factory 到 `lib/client.js`。`pnpm pack` 会在 prepack 阶段自动重建客户端 bundle。
 

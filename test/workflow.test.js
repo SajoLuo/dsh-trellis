@@ -54,6 +54,9 @@ const WORKFLOW_MD = `# Workflow
 [workflow-state:no_task]
 No active task. Ask for task-creation consent.
 [/workflow-state:no_task]
+[workflow-state:task_error]
+Repair the active task record. Do not create or activate another task.
+[/workflow-state:task_error]
 [workflow-state:planning]
 Load trellis-brainstorm; stay in planning.
 [/workflow-state:planning]
@@ -64,7 +67,7 @@ Flow: implement -> check -> update-spec -> commit.
 
 test("parseWorkflowStateBlocks extracts every status body", () => {
   const blocks = parseWorkflowStateBlocks(WORKFLOW_MD);
-  assert.equal(blocks.size, 3);
+  assert.equal(blocks.size, 4);
   assert.equal(
     blocks.get("no_task"),
     "No active task. Ask for task-creation consent.",
@@ -92,9 +95,10 @@ test("sanitizeContextKey matches Trellis task.py sanitization", () => {
   assert.equal(sanitizeContextKey("..__x.."), "x");
 });
 
-test("mapStatus maps planning/in_progress and degrades the rest", () => {
+test("mapStatus preserves task errors and known workflow states", () => {
   assert.equal(mapStatus("planning"), "planning");
   assert.equal(mapStatus("in_progress"), "in_progress");
+  assert.equal(mapStatus("task_error"), "task_error");
   assert.equal(mapStatus("completed"), "no_task");
   assert.equal(mapStatus(null), "no_task");
 });
@@ -129,14 +133,14 @@ test("resolveTrellisState: no active task → no_task breadcrumb", async () => {
   assert.equal(state.body, "No active task. Ask for task-creation consent.");
 });
 
-test("resolveTrellisState: sole session pointer → in_progress breadcrumb", async () => {
+test("resolveTrellisState: exact session pointer → in_progress breadcrumb", async () => {
   const fs = memoryFs({
     [proj(".git")]: "",
     [proj(join(".trellis", "workflow.md"))]: WORKFLOW_MD,
     [proj(join(".trellis", "tasks", "04-17-foo", "task.json"))]: JSON.stringify(
       { status: "in_progress" },
     ),
-    [proj(join(".trellis", ".runtime", "sessions", "dsh_other.json"))]:
+    [proj(join(".trellis", ".runtime", "sessions", "dsh_x.json"))]:
       JSON.stringify({
         current_task: ".trellis/tasks/04-17-foo",
       }),
@@ -184,7 +188,7 @@ test("resolveTrellisState: session-scoped pointer wins over another session", as
   assert.equal(state.taskPath, ".trellis/tasks/04-17-b");
 });
 
-test("resolveTrellisState: sole foreign-session pointer is the conservative fallback", async () => {
+test("resolveTrellisState: sole foreign-session pointer is not read or borrowed", async () => {
   const fs = memoryFs({
     [proj(".git")]: "",
     [proj(join(".trellis", "workflow.md"))]: WORKFLOW_MD,
@@ -198,6 +202,13 @@ test("resolveTrellisState: sole foreign-session pointer is the conservative fall
         last_seen_at: "2026-08-14T00:00:00Z",
       }),
   });
+  const before = [...fs.files];
+  const originalRead = fs.readFile;
+  const reads = [];
+  fs.readFile = async (path) => {
+    reads.push(path);
+    return originalRead(path);
+  };
   const state = await resolveTrellisState({
     cwd: proj(""),
     markers: [".git"],
@@ -205,8 +216,10 @@ test("resolveTrellisState: sole foreign-session pointer is the conservative fall
     fs,
     cache: new Map(),
   });
-  assert.equal(state.status, "in_progress");
-  assert.equal(state.taskPath, ".trellis/tasks/04-17-a");
+  assert.equal(state.status, "no_task");
+  assert.equal(state.taskPath, null);
+  assert.ok(!reads.some((path) => path.endsWith("codex_zzz.json")));
+  assert.deepEqual([...fs.files], before);
 });
 
 test("resolveTrellisState: multiple foreign session pointers refuse to guess", async () => {
@@ -262,7 +275,7 @@ test("resolveTrellisState: in_progress with no matching block uses fallback text
     [proj(join(".trellis", "tasks", "t", "task.json"))]: JSON.stringify({
       status: "in_progress",
     }),
-    [proj(join(".trellis", ".runtime", "sessions", "dsh_only.json"))]:
+    [proj(join(".trellis", ".runtime", "sessions", "dsh_x.json"))]:
       JSON.stringify({
         current_task: ".trellis/tasks/t",
       }),
@@ -284,4 +297,107 @@ test("truncateUtf8 respects byte budget without splitting code points", () => {
   assert.ok(Buffer.byteLength(cut, "utf8") <= 13);
   assert.ok(!cut.endsWith("\ufffd"));
   assert.equal(truncateUtf8("short", 100), "short");
+});
+
+for (const [name, record] of [
+  ["malformed JSON", "{broken"],
+  ["null", "null"],
+  ["array", "[]"],
+  ["scalar", '"planning"'],
+  ["missing status", "{}"],
+  ["empty status", '{"status":""}'],
+  ["blank status", '{"status":"  "}'],
+  ["non-string status", '{"status":false}'],
+  ["missing file", null],
+  ["unreadable file", new Error("EACCES")],
+]) {
+  test(`resolveTrellisState: ${name} preserves the bound task as task_error`, async () => {
+    const taskPath = ".trellis/tasks/broken";
+    const taskJson = proj(join(taskPath, "task.json"));
+    const fs = memoryFs({
+      [proj(".git")]: "",
+      [proj(".trellis/workflow.md")]: WORKFLOW_MD,
+      [proj(".trellis/.runtime/sessions/dsh_me.json")]: JSON.stringify({ current_task: taskPath }),
+      ...(typeof record === "string" ? { [taskJson]: record } : {}),
+    });
+    if (record instanceof Error) {
+      const originalRead = fs.readFile;
+      fs.readFile = async (path) => {
+        if (path === taskJson) throw record;
+        return originalRead(path);
+      };
+    }
+    const before = [...fs.files];
+    const state = await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache: new Map() });
+    assert.equal(state.status, "task_error");
+    assert.equal(state.taskPath, taskPath);
+    assert.match(state.body, /Do not create or activate another task/);
+    assert.deepEqual([...fs.files], before);
+  });
+}
+
+for (const errorBlock of [
+  "",
+  "\n[workflow-state:task_error]\n  \n[/workflow-state:task_error]",
+]) {
+  test(`resolveTrellisState: ${errorBlock ? "empty" : "missing"} task-error block uses a safe fallback`, async () => {
+    const fs = memoryFs({
+      [proj(".git")]: "",
+      [proj(".trellis/workflow.md")]:
+        "[workflow-state:no_task]\nCreate a task.\n[/workflow-state:no_task]" + errorBlock,
+      [proj(".trellis/.runtime/sessions/dsh_me.json")]: '{"current_task":".trellis/tasks/broken"}',
+      [proj(".trellis/tasks/broken/task.json")]: "{broken",
+    });
+    const state = await resolveTrellisState({
+      cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache: new Map(),
+    });
+    assert.equal(state.status, "task_error");
+    assert.equal(state.taskPath, ".trellis/tasks/broken");
+    assert.match(state.body, /Do not create or activate another task/);
+    assert.match(state.body, /task\.json/);
+  });
+}
+
+test("resolveTrellisState: empty identity cannot resolve a generic session pointer", async () => {
+  const fs = memoryFs({
+    [proj(".git")]: "",
+    [proj(".trellis/workflow.md")]: WORKFLOW_MD,
+    [proj(".trellis/.runtime/sessions/.json")]: '{"current_task":".trellis/tasks/foreign"}',
+    [proj(".trellis/tasks/foreign/task.json")]: '{"status":"planning"}',
+  });
+  const state = await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "", fs, cache: new Map() });
+  assert.equal(state.status, "no_task");
+  assert.equal(state.taskPath, null);
+});
+
+for (const record of [
+  "{broken", "null", "[]", "{}", '{"current_task":""}', '{"current_task":"  "}',
+]) {
+  test(`resolveTrellisState: invalid own pointer ${record} does not borrow a foreign session`, async () => {
+    const fs = memoryFs({
+      [proj(".git")]: "",
+      [proj(".trellis/workflow.md")]: WORKFLOW_MD,
+      [proj(".trellis/.runtime/sessions/dsh_me.json")]: record,
+      [proj(".trellis/.runtime/sessions/dsh_other.json")]: '{"current_task":".trellis/tasks/foreign"}',
+      [proj(".trellis/tasks/foreign/task.json")]: '{"status":"planning"}',
+    });
+    const before = [...fs.files];
+    const state = await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache: new Map() });
+    assert.equal(state.status, "no_task");
+    assert.equal(state.taskPath, null);
+    assert.deepEqual([...fs.files], before);
+  });
+}
+
+test("resolveTrellisState: exact binding does not require listing session files", async () => {
+  const fs = memoryFs({
+    [proj(".git")]: "",
+    [proj(".trellis/workflow.md")]: WORKFLOW_MD,
+    [proj(".trellis/.runtime/sessions/dsh_me.json")]: '{"current_task":".trellis/tasks/own"}',
+    [proj(".trellis/tasks/own/task.json")]: '{"status":"planning"}',
+  });
+  delete fs.listDir;
+  const state = await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache: new Map() });
+  assert.equal(state.status, "planning");
+  assert.equal(state.taskPath, ".trellis/tasks/own");
 });

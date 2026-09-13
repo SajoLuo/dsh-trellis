@@ -1,9 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { BREADCRUMB_PROJECTION_KEY as KEY } from "../lib/breadcrumb-projection.js";
-import { isBreadcrumbMessage } from "../lib/breadcrumb.js";
+import { createBreadcrumbComposer, isBreadcrumbMessage } from "../lib/breadcrumb.js";
+import { dshContextKey } from "../lib/session-env.js";
 import { sessionRuntime } from "./helpers/session-runtime.js";
 import { apply, inject, insertBreadcrumbDecision } from "../lib/index.js";
 
@@ -258,13 +262,13 @@ function inbox(initial = []) {
   };
 }
 
-async function preStepRuntime(t, config = {}) {
+async function preStepRuntime(t, config = {}, cwd = fixtureCwd) {
   const ctx = await sessionRuntime(t);
   const state = harness({ settings: true, projectionRegistry: ctx.sessionProjections });
   apply(state.ctx, { ...fixtureConfig, ...config });
   t.after(() => state.disposePlugin());
   const agent = {
-    session: ctx.sessions.create("pre-step", { meta: { cwd: fixtureCwd } }),
+    session: ctx.sessions.create("pre-step", { meta: { cwd } }),
     inbox: inbox(),
   };
   const run = async ({ messages = [prompt("Continue")], decision, step = 2, signal } = {}) => {
@@ -348,4 +352,78 @@ test("skip, disabled byte budget, missing project, and cancellation do not injec
   await assert.rejects(run({ signal: controller.signal }), { name: "AbortError" });
   assert.deepEqual(ctx.sessionProjections.stateOf(agent.session, KEY), {});
   assert.deepEqual(agent.inbox.nextStep, []);
+});
+
+async function temporaryProject(t) {
+  const root = await mkdtemp(join(tmpdir(), "dsh-trellis-isolation-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sessions = join(root, ".trellis", ".runtime", "sessions");
+  const task = ".trellis/tasks/demo";
+  const taskJson = join(root, task, "task.json");
+  await mkdir(sessions, { recursive: true });
+  await mkdir(join(root, task), { recursive: true });
+  await writeFile(taskJson, JSON.stringify({ status: "planning" }));
+  // Deliberately use an old workflow without task_error to cover upgrade order.
+  await writeFile(join(root, ".trellis", "workflow.md"), [
+    "[workflow-state:no_task]\nNo active task.\n[/workflow-state:no_task]",
+    "[workflow-state:planning]\nPlan the task.\n[/workflow-state:planning]",
+  ].join("\n"));
+  return { root, sessions, task, taskJson };
+}
+
+test("pre-step isolates real session files and recovers task_error across settings reload and unbind", async (t) => {
+  const project = await temporaryProject(t);
+  const { agent, state, run } = await preStepRuntime(t, {}, project.root);
+  const foreign = join(project.sessions, "dsh_other.json");
+  const binding = JSON.stringify({ current_task: project.task });
+  await writeFile(foreign, binding);
+  const own = join(project.sessions, `${dshContextKey(agent.session.header.id)}.json`);
+  const commitBreadcrumb = async () => {
+    const message = (await run()).messages.find(isBreadcrumbMessage);
+    assert.ok(message);
+    agent.session.append("user/message", message, { surfaceOp: "append" });
+    return message;
+  };
+
+  const unbound = await commitBreadcrumb();
+  assert.equal(unbound.source.status, "no_task");
+  assert.equal(unbound.source.task, null);
+  await writeFile(own, binding);
+  const planning = await commitBreadcrumb();
+  assert.equal(planning.source.status, "planning");
+  assert.equal(planning.source.task, project.task);
+
+  await writeFile(project.taskJson, "{broken");
+  const error = await commitBreadcrumb();
+  assert.equal(error.source.status, "task_error");
+  assert.equal(error.source.task, project.task);
+  assert.match(error.content[0].text, /Do not create or activate another task/);
+  assert.match(error.content[0].text, /Active task: \.trellis\/tasks\/demo/);
+  assert.equal((await run()).messages.some(isBreadcrumbMessage), false);
+  state.publishSettings({ ...fixtureConfig, enabled: false });
+  state.publishSettings({ ...fixtureConfig, enabled: true });
+  assert.equal((await run()).messages.some(isBreadcrumbMessage), false);
+  assert.equal(await readFile(project.taskJson, "utf8"), "{broken");
+
+  await writeFile(project.taskJson, JSON.stringify({ status: "planning" }));
+  const repaired = await commitBreadcrumb();
+  assert.equal(repaired.source.status, "planning");
+  assert.notEqual(repaired.source.digest, error.source.digest);
+  assert.equal(repaired.source.digest, planning.source.digest);
+  await rm(own);
+  assert.equal((await commitBreadcrumb()).source.status, "no_task");
+  assert.equal(await readFile(foreign, "utf8"), binding);
+});
+
+test("composer without a native session id never borrows the generic dsh pointer", async (t) => {
+  const project = await temporaryProject(t);
+  const binding = JSON.stringify({ current_task: project.task });
+  await writeFile(join(project.sessions, "dsh.json"), binding);
+  const composer = createBreadcrumbComposer({
+    maxBytes: 4096, skipKeyword: "no-trellis", projectRootMarkers: [".trellis"],
+  }, {});
+  const message = await composer.compose({ session: { header: { cwd: project.root } } }, [], new AbortController().signal);
+  assert.equal(message.source.status, "no_task");
+  assert.equal(message.source.task, null);
+  assert.equal(await readFile(join(project.sessions, "dsh.json"), "utf8"), binding);
 });
