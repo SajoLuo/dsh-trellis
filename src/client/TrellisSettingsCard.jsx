@@ -65,7 +65,13 @@ function BooleanField({ id, label, hint, value, disabled, onChange, onReset, ove
   );
 }
 
-export function TrellisSettingsCard({ scope, t }) {
+export function TrellisSettingsPage({ view, ...props }) {
+  return view === "summary"
+    ? props.t("description")
+    : <TrellisSettingsCard {...props} presentation="page" />;
+}
+
+export function TrellisSettingsCard({ scope, t, presentation = "card" }) {
   const subscribe = useCallback((listener) => scope.subscribe(listener), [scope]);
   const getSnapshot = useCallback(() => scope.getSnapshot(), [scope]);
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -73,6 +79,8 @@ export function TrellisSettingsCard({ scope, t }) {
   const [draft, setDraft] = useState(() => makeDraft(snapshot));
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+  const page = presentation === "page";
+  const Container = page ? "section" : "li";
 
   const plan = useMemo(() => planDraft(snapshot, draft), [snapshot, draft]);
   const dirty = plan.writes.length > 0;
@@ -102,19 +110,26 @@ export function TrellisSettingsCard({ scope, t }) {
     if (saving || plan.invalid || plan.writes.length === 0) return;
     setSaving(true);
     setFailed(false);
-    for (const write of plan.writes) {
-      if (write.kind === "unset") await scope.unset(write.field);
-      else await scope.set(write.field, write.value);
+    try {
+      for (const write of plan.writes) {
+        if (write.kind === "unset") await scope.unset(write.field);
+        else await scope.set(write.field, write.value);
+      }
+      const landed = planLanded(scope.getSnapshot(), plan.writes);
+      if (landed) setDraft(makeDraft(scope.getSnapshot()));
+      setFailed(!landed);
+    } catch {
+      // The host may unload or reconnect while saving. Keep the draft and let
+      // the user retry against the next snapshot; never leave an unhandled task.
+      setFailed(true);
+    } finally {
+      setSaving(false);
     }
-    const landed = planLanded(scope.getSnapshot(), plan.writes);
-    if (landed) setDraft(makeDraft(scope.getSnapshot()));
-    setFailed(!landed);
-    setSaving(false);
   };
 
   return (
-    <li className="dsh-trellis-card" data-open={open}>
-      <button
+    <Container className={page ? "dsh-trellis-page" : "dsh-trellis-card"} data-open={page || open}>
+      {!page ? <button
         type="button"
         className="dsh-trellis-header"
         aria-expanded={open}
@@ -127,8 +142,8 @@ export function TrellisSettingsCard({ scope, t }) {
         </span>
         {dirty ? <span className="dsh-trellis-badge">{t("unsaved")}</span> : null}
         <span className="dsh-trellis-chevron" aria-hidden="true">⌄</span>
-      </button>
-      {open ? (
+      </button> : null}
+      {page || open ? (
         <div className="dsh-trellis-body">
           {!snapshot.writable ? <p className="dsh-trellis-readonly" role="status">{t("readOnly")}</p> : null}
           <BooleanField id="dsh-trellis-enabled" label={t("enabled")} hint={t("enabledHint")} value={Boolean(draft.enabled.value)} disabled={disabled} onChange={(value) => edit("enabled", value)} t={t} {...field("enabled")} />
@@ -144,6 +159,6 @@ export function TrellisSettingsCard({ scope, t }) {
           </div>
         </div>
       ) : null}
-    </li>
+    </Container>
   );
 }

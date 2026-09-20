@@ -28,16 +28,17 @@ function harness(entries) {
       },
     },
     subagents: {
-      async listChildren(parentId) {
+      async listChildren(parentId, signal) {
         assert.equal(parentId, parent.id);
-        return entries;
+        return typeof entries === "function" ? entries(signal) : entries;
       },
     },
   };
-  registerWaitTool(ctx);
+  const dispose = registerWaitTool(ctx);
   return {
     tool,
     parent,
+    dispose,
     emit(info) {
       for (const handler of [...handlers]) handler(info);
     },
@@ -161,4 +162,61 @@ test("trellis_wait observes cancellation while it waits", async () => {
   controller.abort(new Error("cancelled by parent"));
   await assert.rejects(pending, /cancelled by parent/);
   assert.equal(state.listenerCount(), 0);
+});
+
+test("unloading the wait tool rejects every active wait and prevents stale executions", async () => {
+  const state = harness([runningChild]);
+  const waits = [1, 2].map(() => state.tool.execute(
+    { subagent_id: runningChild.id }, { agent: state.parent },
+  ));
+  const results = waits.map((pending) => assert.rejects(pending, /unloaded.*no child completion/));
+  await Promise.resolve();
+  assert.equal(state.listenerCount(), 2);
+  state.dispose();
+  state.dispose();
+  await Promise.all(results);
+  assert.equal(state.listenerCount(), 0);
+  await assert.rejects(state.tool.execute(
+    { subagent_id: runningChild.id }, { agent: state.parent },
+  ), /unloaded/);
+
+  const reloaded = harness([runningChild]);
+  const pending = reloaded.tool.execute(
+    { subagent_id: runningChild.id }, { agent: reloaded.parent },
+  );
+  await Promise.resolve();
+  reloaded.emit({ id: runningChild.id, stopReason: "completed" });
+  assert.equal((await pending).outcome, "completed");
+  reloaded.dispose();
+});
+
+test("a pre-aborted invocation does not subscribe or report an inactive child", async () => {
+  const state = harness([{ ...runningChild, activity: "inactive" }]);
+  await assert.rejects(state.tool.execute(
+    { subagent_id: runningChild.id },
+    { agent: state.parent, signal: AbortSignal.abort(new Error("already cancelled")) },
+  ), /already cancelled/);
+  assert.equal(state.listenerCount(), 0);
+  state.dispose();
+});
+
+test("unload during a delayed catalog lookup aborts it and cannot report inactive success", async () => {
+  let release;
+  let lookupSignal;
+  const state = harness((signal) => {
+    lookupSignal = signal;
+    return new Promise((resolve) => { release = resolve; });
+  });
+  const pending = state.tool.execute(
+    { subagent_id: runningChild.id }, { agent: state.parent },
+  );
+  const rejected = assert.rejects(pending, /unloaded/);
+  state.dispose();
+  assert.equal(lookupSignal.aborted, true);
+  assert.equal(state.listenerCount(), 0);
+  // Let cancellation settle before the host's asynchronous lookup completes.
+  // The intermediate waiter rejection must not become an unhandled rejection.
+  await new Promise((resolve) => setImmediate(resolve));
+  release([{ ...runningChild, activity: "inactive" }]);
+  await rejected;
 });

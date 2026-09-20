@@ -309,9 +309,9 @@ test("pre-step inserts once, clears stale inbox, and dedupes immediately after s
 test("pre-step reinjects after compaction and dedupes a newly resumed session", async (t) => {
   const { ctx, agent, run } = await preStepRuntime(t);
   const first = (await run()).messages.find(isBreadcrumbMessage);
-  agent.session.append("user/message", first, { surfaceOp: "append" });
+  const committed = agent.session.append("user/message", first, { surfaceOp: "append" });
   agent.session = ctx.sessions.create("resumed-pre-step", {
-    seed: agent.session.snapshotEvents(), meta: { cwd: fixtureCwd },
+    seed: [committed], meta: { cwd: fixtureCwd },
   });
   assert.equal((await run()).messages.some(isBreadcrumbMessage), false);
   agent.session.append("user/message", prompt("Compacted"), {
@@ -333,6 +333,30 @@ test("reject and empty first-step decisions keep exactly one pending breadcrumb"
   assert.deepEqual(agent.inbox.nextStep, [pending]);
   const result = await run();
   assert.equal(result.messages.filter(isBreadcrumbMessage).length, 1);
+  assert.deepEqual(agent.inbox.nextStep, []);
+});
+
+test("disabling removes only queued Trellis breadcrumbs and re-enabling reinjects once", async (t) => {
+  const { state, agent, run } = await preStepRuntime(t);
+  const unrelated = prompt("Keep the user's queued input");
+  agent.inbox.nextStep.push(unrelated);
+  await run({ decision: { kind: "reject" } });
+  assert.equal(agent.inbox.nextStep.filter(isBreadcrumbMessage).length, 1);
+  state.publishSettings({ ...fixtureConfig, enabled: false });
+  assert.deepEqual(agent.inbox.nextStep, [unrelated]);
+  state.publishSettings(fixtureConfig);
+  assert.equal((await run()).messages.filter(isBreadcrumbMessage).length, 1);
+});
+
+test("an unloaded pre-step listener cannot inject after its downstream continuation resolves", async (t) => {
+  const { state, agent } = await preStepRuntime(t);
+  const listener = state.listeners.at(-1).listener;
+  let release;
+  const decision = { kind: "enter", messages: [prompt("Continue")] };
+  const pending = listener({ agent, messages: decision.messages, step: 2 }, () => new Promise((resolve) => { release = resolve; }));
+  state.disposePlugin();
+  release(decision);
+  assert.equal(await pending, decision);
   assert.deepEqual(agent.inbox.nextStep, []);
 });
 

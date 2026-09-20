@@ -1,4 +1,4 @@
-import { TrellisSettingsCard } from "./TrellisSettingsCard.jsx";
+import { TrellisSettingsCard, TrellisSettingsPage } from "./TrellisSettingsCard.jsx";
 import { settingsCardIdentity } from "./compat.js";
 import { en, zh } from "./locales.js";
 import { styles } from "./styles.js";
@@ -36,6 +36,21 @@ export function apply(ctx) {
         inject: () => ({ scope }),
       },
       TrellisSettingsCard,
+    ),
+  );
+
+  // Alpha.2 owns third-party configuration on the bundle page. Slot injection
+  // waits for its owner and disposes registrations when either side unloads;
+  // the absent slot on RC hosts is harmless, as is the absent legacy slot here.
+  ctx.slots.inject("plugins.bundle.config", () =>
+    ctx.slots.register(
+      {
+        name: "plugins.bundle.config",
+        key: SETTINGS_NAMESPACE,
+        locale: LOCALE_NAMESPACE,
+        inject: () => ({ scope }),
+      },
+      TrellisSettingsPage,
     ),
   );
 }

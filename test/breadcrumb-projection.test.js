@@ -105,8 +105,7 @@ test("resumed and forked sessions dedupe on their first read and stay isolated",
   const ctx = await sessionRuntime(t);
   const projection = registerBreadcrumbProjection(ctx);
   const parent = ctx.sessions.create("parent");
-  append(parent, crumb());
-  const seed = parent.snapshotEvents();
+  const seed = [append(parent, crumb())];
   const resumed = ctx.sessions.create("resumed", { seed });
   const fork = ctx.sessions.create("fork", {
     seed, inheritedEventCount: seed.length,
@@ -124,12 +123,12 @@ test("checkpoint JSON roundtrip and tail replay produce the same domain state", 
   const ctx = await sessionRuntime(t);
   registerBreadcrumbProjection(ctx);
   const session = ctx.sessions.create("checkpoint");
-  append(session, crumb());
+  const events = [append(session, crumb())];
   const checkpoint = JSON.parse(JSON.stringify(ctx.sessionProjections.checkpoint(session)));
-  append(session, crumb("B"));
+  events.push(append(session, crumb("B")));
   const floor = ctx.sessionProjections.restoreFloor(checkpoint);
   const restored = ctx.sessionProjections.restore(
-    checkpoint, session.snapshotEvents(floor), floor, session.header, session.inheritedEventCount,
+    checkpoint, events.filter((event) => event.seq >= floor), floor, session.header, session.inheritedEventCount,
   );
   assert.deepEqual(restored.checkpoint, ctx.sessionProjections.checkpoint(session));
   assert.deepEqual(restored.snapshot.values, {});

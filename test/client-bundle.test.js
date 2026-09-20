@@ -5,6 +5,11 @@ import assert from "node:assert/strict";
 
 test("package declares and emits a DSH Web client factory", async () => {
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(manifest.dsh.manifestVersion, 1);
+  assert.equal(manifest.engines.dsh, manifest.peerDependencies["@deepseek-ai/dsh-tools"]);
+  for (const [name, range] of Object.entries(manifest.peerDependencies)) {
+    if (name.startsWith("@deepseek-ai/dsh-")) assert.match(range, /\^0\.1\.6-alpha\.2/);
+  }
   assert.deepEqual(manifest.dsh.client, {
     inject: [
       "@deepseek-ai/dsh-client-locale",
