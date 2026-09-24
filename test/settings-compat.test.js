@@ -88,6 +88,29 @@ test("settings compatibility keeps profiles without a provider optional", () => 
   );
 });
 
+test("profile-backed settings only configures presentation on the owner fiber", () => {
+  const fiber = {};
+  const disposers = [];
+  let calls = 0;
+  const owner = { fiber, inject(_services, callback) {
+    callback({ effect(fn) { disposers.push(fn()); }, settings: {
+      configure(policy, target) {
+        assert.deepEqual(policy, { auto: false });
+        assert.equal(target, fiber);
+        calls++;
+        return () => calls--;
+      },
+    } });
+  } };
+  installSettingsSectionCompat(owner, {}, namespace, schema, entry, {
+    setSource() { assert.fail("Settings must not replace live Config references"); },
+    onChange() { assert.fail("Settings mounting does not change Config"); },
+  });
+  assert.equal(calls, 1);
+  disposers[0]();
+  assert.equal(calls, 0);
+});
+
 test("settings compatibility fails loudly for an unsupported mounted provider", () => {
   const owner = {
     inject(_services, callback) {

@@ -60,7 +60,8 @@ export function parseDraft(draft) {
     value: {
       enabled: draft.enabled.value,
       maxBytes,
-      projectRootMarkers: parseMarkers(String(draft.projectRootMarkers.value)),
+      projectRootMarkers: parseMarkers(Array.isArray(draft.projectRootMarkers.value)
+        ? draft.projectRootMarkers.value.join("\n") : String(draft.projectRootMarkers.value)),
       skipKeyword: String(draft.skipKeyword.value),
       pythonCmd: String(draft.pythonCmd.value),
       commandsEnabled: draft.commandsEnabled.value,
@@ -101,4 +102,22 @@ export function planLanded(snapshot, writes) {
       ? !Object.hasOwn(user, write.field)
       : Object.hasOwn(user, write.field) && sameValue(user[write.field], write.value),
   );
+}
+
+/** New hosts commit a staged form atomically against its edit-start revision. */
+export async function savePlan(scope, writes, revision) {
+  if (typeof scope.mutate === "function") {
+    const accepted = await scope.mutate(writes.map(({ kind, field, value }) =>
+      kind === "unset" ? { op: "unset", path: [field] }
+        : { op: "set", path: [field], value },
+    ), revision);
+    if (accepted === false) return false;
+  } else {
+    for (const write of writes) {
+      const accepted = write.kind === "unset"
+        ? await scope.unset(write.field) : await scope.set(write.field, write.value);
+      if (accepted === false) return false;
+    }
+  }
+  return planLanded(scope.getSnapshot(), writes);
 }

@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const versions = process.argv.slice(2);
-if (versions.length === 0) versions.push("0.1.5-rc.2", "0.1.6-alpha.2");
-if (versions.some((version) => !["0.1.5-rc.2", "0.1.6-alpha.2"].includes(version))) {
-  throw new Error("Supported test hosts: 0.1.5-rc.2 and 0.1.6-alpha.2");
+if (versions.length === 0) versions.push("0.1.5-rc.2", "0.1.6-alpha.2", "0.1.7-rc.1");
+if (versions.some((version) => !["0.1.5-rc.2", "0.1.6-alpha.2", "0.1.7-rc.1"].includes(version))) {
+  throw new Error("Supported test hosts: 0.1.5-rc.2, 0.1.6-alpha.2, 0.1.7-rc.1");
 }
 const root = fileURLToPath(new URL("../", import.meta.url));
 const original = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
@@ -36,6 +36,12 @@ for (const version of versions) {
   if (version === "0.1.5-rc.2") {
     delete manifest.devDependencies["@deepseek-ai/dsh-ptc-runtime"];
     manifest.devDependencies["@deepseek-ai/dsh-code-runtime"] = version;
+  }
+  if (version !== "0.1.7-rc.1") {
+    manifest.devDependencies["@deepseek-ai/cordis"] = "4.0.2";
+    manifest.devDependencies["@deepseek-ai/schemastery"] = "3.18.2";
+    manifest.devDependencies["@deepseek-ai/cordis-plugin-include"] = "1.0.7";
+    manifest.devDependencies["@deepseek-ai/cordis-plugin-loader"] = "1.0.3";
   }
   await writeFile(join(cwd, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
   // Invoke pnpm's CLI directly, avoiding shell argument concatenation on Windows.

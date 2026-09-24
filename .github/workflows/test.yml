@@ -26,5 +26,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build:client
       - run: pnpm test
-      - run: pnpm run test:compat 0.1.5-rc.2
+      - run: pnpm run test:compat 0.1.5-rc.2 0.1.6-alpha.2
       - run: npm pack --dry-run --ignore-scripts

@@ -11,7 +11,7 @@ import {
   makeDraft,
   parseDraft,
   planDraft,
-  planLanded,
+  savePlan,
   resetDraft,
 } from "./form.js";
 
@@ -77,6 +77,7 @@ export function TrellisSettingsCard({ scope, t, presentation = "card" }) {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() => makeDraft(snapshot));
+  const [revision, setRevision] = useState(snapshot.revision);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
   const page = presentation === "page";
@@ -85,7 +86,10 @@ export function TrellisSettingsCard({ scope, t, presentation = "card" }) {
   const plan = useMemo(() => planDraft(snapshot, draft), [snapshot, draft]);
   const dirty = plan.writes.length > 0;
   useEffect(() => {
-    if (!dirty && snapshot.status === "ready") setDraft(makeDraft(snapshot));
+    if (!dirty && snapshot.status === "ready") {
+      setDraft(makeDraft(snapshot));
+      setRevision(snapshot.revision);
+    }
   }, [dirty, snapshot]);
 
   if (snapshot.status !== "ready") return null;
@@ -104,6 +108,7 @@ export function TrellisSettingsCard({ scope, t, presentation = "card" }) {
   };
   const discard = () => {
     setDraft(makeDraft(snapshot));
+    setRevision(snapshot.revision);
     setFailed(false);
   };
   const save = async () => {
@@ -111,12 +116,11 @@ export function TrellisSettingsCard({ scope, t, presentation = "card" }) {
     setSaving(true);
     setFailed(false);
     try {
-      for (const write of plan.writes) {
-        if (write.kind === "unset") await scope.unset(write.field);
-        else await scope.set(write.field, write.value);
+      const landed = await savePlan(scope, plan.writes, revision);
+      if (landed) {
+        setDraft(makeDraft(scope.getSnapshot()));
+        setRevision(scope.getSnapshot().revision);
       }
-      const landed = planLanded(scope.getSnapshot(), plan.writes);
-      if (landed) setDraft(makeDraft(scope.getSnapshot()));
       setFailed(!landed);
     } catch {
       // The host may unload or reconnect while saving. Keep the draft and let

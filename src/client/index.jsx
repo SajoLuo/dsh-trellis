@@ -5,10 +5,9 @@ import { styles } from "./styles.js";
 
 export const SETTINGS_NAMESPACE = "dsh-trellis";
 export const LOCALE_NAMESPACE = "settings.dsh-trellis";
-export const inject = ["slots", "locale", "settingsScope"];
+export const inject = ["slots", "locale"];
 
 export function apply(ctx) {
-  const scope = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE });
   ctx.effect(
     () => ctx.locale.register(LOCALE_NAMESPACE, { zh, en }),
     "dsh-trellis.client.locale",
@@ -24,6 +23,15 @@ export function apply(ctx) {
     return () => tag.remove();
   }, "dsh-trellis.client.styles");
 
+  ctx.inject(["configForms"], (formsCtx) => {
+    registerForms(formsCtx, formsCtx.configForms.get(SETTINGS_NAMESPACE));
+  });
+  ctx.inject(["settingsScope"], (legacyCtx) => {
+    registerForms(legacyCtx, legacyCtx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE }));
+  });
+}
+
+function registerForms(ctx, scope) {
   ctx.slots.inject("settings.plugin.item", () =>
     ctx.slots.register(
       {

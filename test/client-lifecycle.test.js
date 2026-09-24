@@ -7,7 +7,7 @@ import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DEFAULTS } from "../src/client/form.js";
 
-async function clientHarness(initialSlots = {}) {
+async function clientHarness(initialSlots = {}, modern = false) {
   const definitions = new Map(Object.entries(initialSlots));
   const registrations = new Map();
   const dependencies = new Map();
@@ -31,9 +31,13 @@ async function clientHarness(initialSlots = {}) {
     throw new Error(`Unexpected bundled client import: ${name}`);
   });
   const ctx = {
+    inject(services, callback) {
+      if (services[0] === (modern ? "configForms" : "settingsScope")) callback(ctx);
+    },
     effect(callback) { const dispose = callback(); effects.push(dispose); return dispose; },
     locale: { register(ns) { locales.add(ns); return () => locales.delete(ns); } },
     settingsScope: { bind({ namespace }) { assert.equal(namespace, "dsh-trellis"); return scope; } },
+    configForms: { get(namespace) { assert.equal(namespace, "dsh-trellis"); return scope; } },
     slots: {
       spec(name) { return definitions.get(name); },
       inject(name, callback) {
@@ -74,8 +78,8 @@ async function clientHarness(initialSlots = {}) {
   };
 }
 
-test("alpha bundle page renders an open form and summary without a nested card", async () => {
-  const h = await clientHarness({ "plugins.bundle.config": { kind: "keyed" } });
+for (const modern of [false, true]) test(`${modern ? "configForms" : "legacy"} bundle page renders an open form and summary`, async () => {
+  const h = await clientHarness({ "plugins.bundle.config": { kind: "keyed" } }, modern);
   assert.deepEqual([...h.registrations.keys()], ["plugins.bundle.config:dsh-trellis"]);
   const page = h.render("plugins.bundle.config", "page");
   assert.match(page, /<section class="dsh-trellis-page"/);

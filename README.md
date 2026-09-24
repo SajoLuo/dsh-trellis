@@ -6,7 +6,7 @@ DeepSeek Harness (dsh) host 插件：把 [Trellis](https://github.com/mindfold-a
 2. **隔离的原生会话上下文身份** — 从当前 agent 的 DSH 原生 session header 生成受管的 `DSH_TRELLIS_CONTEXT_ID`，让 `task.py start/create/current` 解析到会话级 active-task 指针，并在子代理身份不同于 shell 自身 session 时优先使用被转发的身份；插件命令启动的子进程也显式使用同一个 DSH 身份。
 3. **原生子代理同步** — 安装插件后，Trellis 角色可用 DSH continuable 后台子代理；主会话先继续独立工作，耗尽后可调用事件驱动的 `trellis_wait`。它监听 DSH 的 `subagent/end`，利用 lifecycle 自带的 run/provider/output-block 元数据返回 `completed / failed / aborted / unknown` 的 fail-closed 结论。`error`、`max-tokens`、`refusal` 和未来未知失败原因都不会被误报成通过。rc.8 在父会话 idle 时也会用原生 settlement notice 唤醒，因此已经结束当前轮时无需额外调用 wait。
 4. **`/trellis` 命令** — `/trellis-status`（活跃任务 + git 状态）、`/trellis-finish`（只读检查 + 安全收尾清单，不提前清 active-task 指针）。命令输出不进模型历史；真正的会话收尾走技能面 `/trellis-finish-work`，由技能先归档再写 journal。rc.8 下两条零输入命令使用 `recordInput: false`，并显式拒绝参数和图片附件，避免静默忽略输入。
-5. **Web 配置菜单** — DSH `0.1.6-alpha.2` 的“插件 → trellis”详情页直接显示全部六个配置项；旧版 RC 继续使用“设置 → 插件 → 插件配置”卡片。支持分阶段编辑、恢复 profile 配置层和保存后读回确认。配置里的 `enabled=false` 会停用工作流功能但保留表单；插件管理器的整包或组件开关则会连同表单一起卸载。
+5. **Web 配置菜单** — DSH `0.1.7-rc.1` 的“插件 → dsh-trellis”详情页直接显示全部六个配置项；保留 `0.1.6-alpha.2` 详情页与旧版 RC 卡片。新版支持带修订号的原子保存、恢复 profile 继承值和冲突时保留草稿。配置里的 `enabled=false` 会停用工作流功能但保留表单；插件管理器的整包或组件开关则会连同表单一起卸载。
 
 非 Trellis 项目不注入面包屑；命令只有被用户显式调用时才会检查并返回“未初始化 Trellis”。
 
@@ -46,9 +46,17 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 
 `file:` 插件会作为 profile 内的 pnpm 快照安装；拉取源码更新后，尤其是版本新增文件时，需要先 remove 再 add 刷新该 profile。
 
-配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。Host peer 范围显式覆盖 DSH `0.1.0-rc.6+`、`0.1.1-rc.1+`、`0.1.2-alpha.1+`、`0.1.3-alpha.1+`、`0.1.5-alpha.1+` 与 `0.1.6-alpha.2+` 六条已知预发布线，避免 npm 的 prerelease 语义把新版 Host 误判为不兼容。本仓开发基线固定为 `0.1.6-alpha.2`，另用隔离依赖回归 `0.1.5-rc.2`；这不代表逐个重新验证了所有历史版本。Host 侧 Settings 桥同时兼容旧版包级 helper 与当前 provider 方法，Web 配置界面只在具备 settings/client surface 的 profile 中加载。
+配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。Host peer 范围在既有预发布线基础上增加 `^0.1.7-rc.1`；开发基线固定为 `0.1.7-rc.1`，隔离回归 `0.1.5-rc.2` 和 `0.1.6-alpha.2`，不代表逐个重新验证所有历史版本。新版 DSH 的 peer 准入使用 `includePrerelease: true`，与 npm 默认匹配不同；通过准入不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。Web 配置只在具备对应 client surface 的 profile 中加载。
 
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
+
+### 0.1.8：DSH 0.1.7-rc.1 适配
+
+- 按[新版 Settings 契约](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.1/packages/settings/settings/README.md)声明六个 `.volatile()` 配置字段，读取 live Config，并由 Loader 的 `loader/volatile-update` 通知更新工作流注册。Settings 仅持有当前插件 fiber 的自定义页面策略；迟到、替换或卸载该服务不会重置配置。旧宿主保留原 helper/provider 路径。
+- Web 改用 `configForms.get(entryId)`，保留旧 `settingsScope` 兼容分支。新版一次提交全部字段与编辑开始时的 revision，冲突或断连保留草稿；冲突后先放弃更改、读入新值，再重新编辑。旧宿主继续使用逐字段写入。
+- 适配父会话 `subagentCatalog`：目录只证明直接归属和 continuable 模式，当前驻留状态另读 Session store，并校验创建时间和父会话，防止复用 id 串会话。查询期间捕获的 `subagent/end` 优先于 inactive 快照；冷子代理仍返回 unknown，不猜成功。旧目录格式继续支持。
+- 保留单文件 `dsh.bundle.patch`、`manifestVersion: 1` 和 profile 安装命令；无需增加安装脚本。不改变 Trellis 生成模板及已有任务绑定。
+- 本轮按本地工作区验证；不宣称支持新版 DSH 的 SSH 远程工作区文件访问。
 
 ### 0.1.7：DSH 0.1.6-alpha.2 适配
 
@@ -72,7 +80,9 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 
 ## 配置
 
-支持 Settings provider 的 DSH Web profile，在 `0.1.6-alpha.2` 打开“插件 → trellis”，旧版 RC 打开“设置 → 插件 → 插件配置 → Trellis 工作流”。保存内容进入该 DSH_HOME 的 `settings.yaml`，优先级高于 profile 组合层并立即生效。
+支持 Settings 的 DSH Web profile，在新版打开“插件 → dsh-trellis”，旧版 RC 打开“设置 → 插件 → 插件配置 → Trellis 工作流”。`0.1.7-rc.1` 保存到当前 profile 的 `cordis.patch.yml`，全局 patch 和命令行覆盖仍优先，无法生效的表单写入会被拒绝；旧宿主仍保存到 `settings.yaml`。
+
+升级前备份 `settings.yaml` 和各 profile 配置。新版宿主会把旧文件改名为 `settings.yaml.imported`，并向**首次启动的 profile** 按 entry id 一次性导入；拒绝的 section 只保留在备份文件，不会自动重试。插件不会自行重命名、删除或跨 profile 复制配置；应先安装兼容插件，再启动迁移，并核对其他 profile 的需要。
 
 Headless、rc.6 或需要声明部署默认值时，仍可在 profile 的 `cordis.patch.yml` 里覆盖（整行替换）；Web 卡片的“恢复配置文件值”会清除用户层字段并重新继承这里的值：
 
@@ -108,10 +118,10 @@ pnpm install
 pnpm run build:client
 pnpm test    # node --test test/*.test.js
 pnpm run test:compat 0.1.5-rc.2  # 临时副本中安装旧宿主并运行同一套测试
-# 不传版本参数时，隔离回归 RC.2 和 alpha.2 两个宿主
+# 不传版本参数时，隔离回归 0.1.5-rc.2、0.1.6-alpha.2、0.1.7-rc.1
 ```
 
-GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 alpha.2 安装、客户端构建、测试、隔离 RC.2 回归和打包检查；其中包含真实 Session/projection 服务的增量驱动、恢复、分叉、压缩和 checkpoint 回归，以及真实临时项目中的精确身份绑定、跨会话隔离、任务记录损坏/修复、解绑与 Settings 重载回归。另有编译客户端的 React 渲染、slot owner 迟到/重载和资源清理测试。
+GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.1.7-rc.1` 安装、客户端构建、测试、两个旧宿主回归和打包检查。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。
 
 `test:compat` 不改当前 checkout 的依赖，临时副本保留在系统临时目录并打印路径供检查。发布前还应使用隔离 `DSH_HOME` 启动真实 Web profile，验证配置保存/读回、整包及组件开关、重新挂载和卸载；不复用个人凭据或会话。0.1.7 的 Windows 本地验收已覆盖这些浏览器路径。
 
