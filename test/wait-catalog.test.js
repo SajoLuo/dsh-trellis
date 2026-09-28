@@ -67,3 +67,30 @@ for (const stopReason of ["completed", "error", "aborted"]) {
     assert.equal(h.listeners.size, 0);
   });
 }
+
+for (const code of ["SESSION_QUERY_CORRUPT_SESSION", "SESSION_QUERY_SESSION_NOT_FOUND"]) {
+  test(`catalog lookup failure preserves ${code} and releases its listener`, async (t) => {
+    const error = Object.assign(new Error("catalog unavailable"), { code });
+    const h = fixture(t, { entries: async () => { throw error; } });
+    await assert.rejects(h.run(), (caught) => caught === error);
+    assert.equal(h.listeners.size, 0);
+    h.end(); // A later settlement cannot convert the failed lookup into success.
+    await assert.rejects(h.run(), (caught) => caught === error);
+    assert.equal(h.listeners.size, 0);
+  });
+}
+
+test("catalog rejection during unload preserves the failure and leaves no listener", async (t) => {
+  let rejectLookup;
+  const error = new Error("late catalog failure");
+  const h = fixture(t, { entries: () => new Promise((_resolve, reject) => { rejectLookup = reject; }) });
+  const pending = h.run();
+  const rejected = assert.rejects(pending, (caught) => caught === error);
+  h.dispose();
+  assert.equal(h.listeners.size, 0);
+  rejectLookup(error);
+  await rejected;
+  h.end();
+  await assert.rejects(h.run(), /unloaded/);
+  assert.equal(h.listeners.size, 0);
+});

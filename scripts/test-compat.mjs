@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { SUPPORTED_HOSTS, createCompatManifest } from "./compat-hosts.mjs";
 
 const versions = process.argv.slice(2);
-if (versions.length === 0) versions.push("0.1.5-rc.2", "0.1.6-alpha.2", "0.1.7-rc.1");
-if (versions.some((version) => !["0.1.5-rc.2", "0.1.6-alpha.2", "0.1.7-rc.1"].includes(version))) {
-  throw new Error("Supported test hosts: 0.1.5-rc.2, 0.1.6-alpha.2, 0.1.7-rc.1");
+if (versions.length === 0) versions.push(...SUPPORTED_HOSTS);
+if (versions.some((version) => !SUPPORTED_HOSTS.includes(version))) {
+  throw new Error(`Supported test hosts: ${SUPPORTED_HOSTS.join(", ")}`);
 }
 const root = fileURLToPath(new URL("../", import.meta.url));
 const original = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
@@ -26,23 +27,8 @@ const run = (cmd, args, cwd) => {
 for (const version of versions) {
   const cwd = await mkdtemp(join(tmpdir(), `dsh-trellis-compat-${version}-`));
   console.log(`DSH ${version}: ${cwd}`);
-  for (const name of ["lib", "src", "test"]) await cp(join(root, name), join(cwd, name), { recursive: true });
-  const manifest = structuredClone(original);
-  manifest.private = true;
-  delete manifest.scripts.prepack;
-  for (const name of Object.keys(manifest.devDependencies)) {
-    if (name.startsWith("@deepseek-ai/dsh-")) manifest.devDependencies[name] = version;
-  }
-  if (version === "0.1.5-rc.2") {
-    delete manifest.devDependencies["@deepseek-ai/dsh-ptc-runtime"];
-    manifest.devDependencies["@deepseek-ai/dsh-code-runtime"] = version;
-  }
-  if (version !== "0.1.7-rc.1") {
-    manifest.devDependencies["@deepseek-ai/cordis"] = "4.0.2";
-    manifest.devDependencies["@deepseek-ai/schemastery"] = "3.18.2";
-    manifest.devDependencies["@deepseek-ai/cordis-plugin-include"] = "1.0.7";
-    manifest.devDependencies["@deepseek-ai/cordis-plugin-loader"] = "1.0.3";
-  }
+  for (const name of ["lib", "src", "test", "scripts"]) await cp(join(root, name), join(cwd, name), { recursive: true });
+  const manifest = createCompatManifest(original, version);
   await writeFile(join(cwd, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
   // Invoke pnpm's CLI directly, avoiding shell argument concatenation on Windows.
   if (pnpmCli.endsWith(".exe")) run(pnpmCli, ["install", "--ignore-scripts"], cwd);

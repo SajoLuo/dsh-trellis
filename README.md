@@ -46,9 +46,15 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 
 `file:` 插件会作为 profile 内的 pnpm 快照安装；拉取源码更新后，尤其是版本新增文件时，需要先 remove 再 add 刷新该 profile。
 
-配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。Host peer 范围在既有预发布线基础上增加 `^0.1.7-rc.1`；开发基线固定为 `0.1.7-rc.1`，隔离回归 `0.1.5-rc.2` 和 `0.1.6-alpha.2`，不代表逐个重新验证所有历史版本。新版 DSH 的 peer 准入使用 `includePrerelease: true`，与 npm 默认匹配不同；通过准入不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。Web 配置只在具备对应 client surface 的 profile 中加载。
+配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。Host peer 范围包含 `^0.1.7-rc.1`，已覆盖 RC.2，无需扩大范围；开发基线仍固定为 `0.1.7-rc.1`，隔离回归 `0.1.7-rc.2`、`0.1.5-rc.2` 和 `0.1.6-alpha.2`，不代表逐个重新验证所有历史版本。新版 DSH 的 peer 准入使用 `includePrerelease: true`，与 npm 默认匹配不同；通过准入不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。Web 配置只在具备对应 client surface 的 profile 中加载。
 
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
+
+### 0.1.9：DSH 0.1.7-rc.2 兼容验证
+
+- 新增 RC.2 隔离回归及 Windows/Linux CI 覆盖，修复兼容测试把非 RC.1 宿主错误归为旧版 Cordis 依赖的逻辑。
+- 使用真实 AgentLoop、Loader 和 Session 验证动态工具增删、Settings 重挂、面包屑去重、恢复/分叉及压缩后的重新注入；补充等待目录失败与卸载清理回归。
+- 本版不改变插件运行时代码、peer 范围、安装命令或 Trellis 生成模板；保留 RC.1 开发基线及两条旧宿主回归。验证范围与限制见[详细记录](https://github.com/SajoLuo/dsh-trellis/blob/v0.1.9/docs/validation-dsh-0.1.7-rc.2.md)。
 
 ### 0.1.8：DSH 0.1.7-rc.1 适配
 
@@ -118,12 +124,15 @@ pnpm install
 pnpm run build:client
 pnpm test    # node --test test/*.test.js
 pnpm run test:compat 0.1.5-rc.2  # 临时副本中安装旧宿主并运行同一套测试
-# 不传版本参数时，隔离回归 0.1.5-rc.2、0.1.6-alpha.2、0.1.7-rc.1
+pnpm run test:compat 0.1.7-rc.2  # RC.2 动态工具与面包屑集成回归
+# 不传版本参数时，隔离回归 0.1.5-rc.2、0.1.6-alpha.2、0.1.7-rc.1、0.1.7-rc.2
 ```
 
-GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.1.7-rc.1` 安装、客户端构建、测试、两个旧宿主回归和打包检查。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。
+GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.1.7-rc.1` 安装、客户端构建、测试、RC.2 和两个旧宿主回归及打包检查。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。
 
-`test:compat` 不改当前 checkout 的依赖，临时副本保留在系统临时目录并打印路径供检查。发布前还应使用隔离 `DSH_HOME` 启动真实 Web profile，验证配置保存/读回、整包及组件开关、重新挂载和卸载；不复用个人凭据或会话。0.1.7 的 Windows 本地验收已覆盖这些浏览器路径。
+RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以本地脚本化模型响应验证三种 `toolUpdate` 能力：不支持、`addition-only`、`in-history`。覆盖插件启停的工具增删消息、Settings 重挂不重复注入、混合历史的恢复/分叉投影，以及 surface 替换后重建工具基线并重新注入面包屑。等待工具另覆盖目录损坏/不存在及卸载期间查询失败的错误保留与监听器清理。该验证不调用外部模型，也不替代 Web 浏览器或真实子代理派发验收；详情见 [2026-09-28 验证记录](https://github.com/SajoLuo/dsh-trellis/blob/main/docs/validation-dsh-0.1.7-rc.2.md)。
+
+`test:compat` 不改当前 checkout 的依赖，临时副本保留在系统临时目录并打印路径供检查。宿主工具链采用显式支持列表：RC.1/RC.2 使用 Cordis 4.0.4、Schemastery 3.18.4、Loader 1.0.5、Include 1.0.9；两条旧线保留各自旧依赖组合，不按“非最新版本”猜测。发布前还应使用隔离 `DSH_HOME` 启动真实 Web profile，验证配置保存/读回、整包及组件开关、重新挂载和卸载；不复用个人凭据或会话。插件 0.1.8 的 Windows / DSH RC.1 验收已覆盖这些浏览器路径；本轮 RC.2 未重跑浏览器验收。
 
 Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 生成 DSH lazy-CJS factory 到 `lib/client.js`。`pnpm pack` 会在 prepack 阶段自动重建客户端 bundle。
 

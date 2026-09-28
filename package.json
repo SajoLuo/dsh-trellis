@@ -1,6 +1,6 @@
 {
   "name": "dsh-trellis",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Trellis workflow integration for DeepSeek Harness: per-turn workflow-state breadcrumbs, utility commands, and native session identity.",
   "type": "module",
   "main": "lib/index.js",
@@ -102,6 +102,7 @@
     "@deepseek-ai/cordis-plugin-loader": "1.0.5",
     "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/dsh-agent": "0.1.7-rc.1",
+    "@deepseek-ai/dsh-agent-loop": "0.1.7-rc.1",
     "@deepseek-ai/dsh-attachment": "0.1.7-rc.1",
     "@deepseek-ai/dsh-client-locale": "0.1.7-rc.1",
     "@deepseek-ai/dsh-client-ui-settings": "0.1.7-rc.1",

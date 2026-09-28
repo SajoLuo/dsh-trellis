@@ -6,7 +6,7 @@ import { SessionQueryEngine } from "@deepseek-ai/dsh-session-query";
 import { sessionRuntime } from "./helpers/session-runtime.js";
 import { registerWaitTool } from "../lib/wait-tool.js";
 
-test("wait consumes the real RC.1 catalog/projection/query and live Session store", {
+test("wait consumes the real profile-backed catalog/projection/query and live Session store", {
   skip: typeof settingsModule.SettingsForms !== "function",
 }, async (t) => {
   const ctx = await sessionRuntime(t);
