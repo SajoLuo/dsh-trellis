@@ -1,6 +1,6 @@
 // Exact published host/toolchain combinations; never infer legacy from != latest.
 export const SUPPORTED_HOSTS = [
-  "0.1.5-rc.2", "0.1.6-alpha.2", "0.1.7-rc.1", "0.1.7-rc.2",
+  "0.1.5-rc.2", "0.1.6-alpha.2", "0.1.7-rc.1", "0.1.7-rc.2", "0.2.0-rc.1",
 ];
 const legacyHosts = new Set(["0.1.5-rc.2", "0.1.6-alpha.2"]);
 

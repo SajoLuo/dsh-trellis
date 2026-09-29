@@ -1,15 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { Context } from "@deepseek-ai/cordis";
 import Loader from "@deepseek-ai/cordis-plugin-loader";
-import AgentRegistry from "@deepseek-ai/dsh-agent";
-import AgentLoop from "@deepseek-ai/dsh-agent-loop";
-import LlmRuntime, { LlmAdapter, createUserMessage } from "@deepseek-ai/dsh-llm";
-import SessionStore, { Session } from "@deepseek-ai/dsh-session";
-import SessionProjectionRegistry from "@deepseek-ai/dsh-session-projection";
-import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
-import ToolRuntime from "@deepseek-ai/dsh-tools";
+import { LlmAdapter, createUserMessage } from "@deepseek-ai/dsh-llm";
+import { Session } from "@deepseek-ai/dsh-session";
+import { agentRuntime } from "./helpers/agent-runtime.js";
 import * as plugin from "../lib/index.js";
 import { isBreadcrumbMessage } from "../lib/breadcrumb.js";
 import { BREADCRUMB_PROJECTION_KEY, breadcrumbFingerprint } from "../lib/breadcrumb-projection.js";
@@ -46,19 +41,11 @@ class ScriptedAdapter extends LlmAdapter {
 }
 
 for (const toolUpdate of [undefined, "addition-only", "in-history"]) {
-  test(`real RC.2 tool lifecycle preserves breadcrumbs (${toolUpdate ?? "no tool updates"})`, {
+  test(`real dynamic tool lifecycle preserves breadcrumbs (${toolUpdate ?? "no tool updates"})`, {
     skip: typeof Session.prototype.toolHistory !== "function",
     timeout: 15_000,
   }, async (t) => {
-    const ctx = new Context();
-    t.after(() => ctx.fiber.dispose());
-    await ctx.plugin(LlmRuntime);
-    await ctx.plugin(SessionStore);
-    await ctx.plugin(SessionProjectionRegistry);
-    await ctx.plugin(SystemPrompt, { personaPrefix: "", personaSuffix: "" });
-    await ctx.plugin(ToolRuntime);
-    await ctx.plugin(AgentRegistry);
-    await ctx.plugin(AgentLoop, { agents: [] });
+    const ctx = await agentRuntime(t);
     // These registrations are unrelated to request/session behavior here.
     ctx.provide("commands", { register: () => () => {} });
     ctx.provide("shellEnv", { register: () => () => {} });

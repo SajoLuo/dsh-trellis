@@ -94,3 +94,15 @@ test("catalog rejection during unload preserves the failure and leaves no listen
   await assert.rejects(h.run(), /unloaded/);
   assert.equal(h.listeners.size, 0);
 });
+
+test("a settlement during a failed catalog lookup cannot turn the failure into success", async (t) => {
+  let rejectLookup;
+  const error = new Error("catalog query failed after settlement");
+  const h = fixture(t, { entries: () => new Promise((_resolve, reject) => { rejectLookup = reject; }) });
+  const pending = h.run();
+  const rejected = assert.rejects(pending, (caught) => caught === error);
+  h.end("completed");
+  rejectLookup(error);
+  await rejected;
+  assert.equal(h.listeners.size, 0);
+});
