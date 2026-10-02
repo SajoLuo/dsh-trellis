@@ -23,7 +23,20 @@ dsh plugin --profile headless add dsh-trellis
 dsh plugin --profile tui add dsh-trellis
 ```
 
-`dsh plugin` 会把插件安装到指定 profile；每个实际使用的 profile 都需要单独安装。升级到 npm 上的最新版本：
+`dsh plugin` 会把插件安装到指定 profile；每个实际使用的 profile 都需要单独安装。
+
+DSH `0.2.0-rc.2` 的 macOS / Windows 桌面端可在菜单栏“Manage dsh command”中安装或管理内置 `dsh` 命令，无需单独安装 Node 或 pnpm。先用 `dsh --version` 确认 PATH 中实际调用的版本；旧的全局 CLI 可能与桌面端不同。桌面端默认使用 `desktop` profile，其他 profile 仍需分别安装。
+
+新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.11` 时，在插件页输入 `dsh-trellis@0.1.11`，或显式安装到实际使用的 profile：
+
+```powershell
+dsh plugin --profile desktop add dsh-trellis@0.1.11
+# Web / headless 用户将 desktop 替换为对应 profile 名称。
+```
+
+DSH RC.2 内置 pnpm 11；其默认新版本等待期为 24 小时，裸包名可能暂时解析到较旧版本。显式版本安装会走安装器的相应确认流程，版本准入仍须通过；不需要关闭全局等待期或绕过兼容性检查。参见 [DSH RC.2 更新说明](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.0-rc.2) 与 [pnpm 11 发布说明](https://pnpm.io/blog/releases/11.0)。
+
+日常升级命令：
 
 ```powershell
 dsh plugin --profile web update dsh-trellis
@@ -49,6 +62,12 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。当前源码的 Host peer 范围新增 `^0.2.0-rc.1`，保留既有版本范围；开发基线固定为 `0.2.0-rc.1`，隔离回归 `0.1.7-rc.2`、`0.1.7-rc.1`、`0.1.6-alpha.2` 和 `0.1.5-rc.2`，不代表逐个重新验证所有历史版本。新版 DSH 的 peer 准入使用 `includePrerelease: true`，与 npm 默认匹配不同；通过准入不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。Web 配置只在具备对应 client surface 的 profile 中加载。
 
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
+
+### 0.1.11：DSH 0.2.0-rc.2 兼容验证
+
+- 增加 `0.2.0-rc.2` 隔离回归与 Windows/Linux CI 目标；本地 RC.1 / RC.2 均为 130 项通过、无失败或跳过，RC.2 独立 Web profile 验收通过。
+- 现有 `^0.2.0-rc.1` 已覆盖 RC.2，无需扩展 peer 或新增运行时补丁。开发基线仍为锁定的 RC.1。
+- 补充桌面内置 CLI、profile 区别及显式版本安装说明。本版不包含 Trellis CLI 的归档与嵌套身份补丁，它们在独立适配分支中维护。范围与限制见[RC.2 验证记录](docs/validation-dsh-0.2.0-rc.2.md)；远端 CI 和发布状态以对应标签为准。
 
 ### 0.1.10：DSH 0.2.0-rc.1 适配
 
@@ -131,10 +150,11 @@ pnpm run build:client
 pnpm test    # node --test test/*.test.js
 pnpm run test:compat 0.1.5-rc.2  # 临时副本中安装旧宿主并运行同一套测试
 pnpm run test:compat 0.1.7-rc.2  # RC.2 动态工具与面包屑集成回归
-# 不传版本参数时，隔离回归 0.1.5-rc.2、0.1.6-alpha.2、0.1.7-rc.1、0.1.7-rc.2、0.2.0-rc.1
+pnpm run test:compat 0.2.0-rc.2  # 最新 0.2 RC.2 隔离回归
+# 不传版本参数时，隔离回归 0.1.5-rc.2、0.1.6-alpha.2、0.1.7-rc.1、0.1.7-rc.2、0.2.0-rc.1、0.2.0-rc.2
 ```
 
-GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.2.0-rc.1` 安装、客户端构建、测试、四条旧宿主回归及打包检查。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。
+GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.2.0-rc.1` 安装、客户端构建、测试、四条旧宿主与 `0.2.0-rc.2` 隔离回归及打包检查。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。
 
 RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以本地脚本化模型响应验证三种 `toolUpdate` 能力：不支持、`addition-only`、`in-history`。覆盖插件启停的工具增删消息、Settings 重挂不重复注入、混合历史的恢复/分叉投影，以及 surface 替换后重建工具基线并重新注入面包屑。等待工具另覆盖目录损坏/不存在及卸载期间查询失败的错误保留与监听器清理。该验证不调用外部模型，也不替代 Web 浏览器或真实子代理派发验收；详情见 [2026-09-28 验证记录](https://github.com/SajoLuo/dsh-trellis/blob/main/docs/validation-dsh-0.1.7-rc.2.md)。
 
