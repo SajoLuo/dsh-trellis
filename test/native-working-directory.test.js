@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { agentRuntime } from "./helpers/agent-runtime.js";
@@ -12,7 +12,9 @@ import { resolveConfig } from "../lib/config.js";
 test("real alpha directory changes survive replay/fork and retain original-project identity", {
   skip: !hasWorkingDirectory, timeout: 10_000,
 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "trellis-native-directory-"));
+  // The real filesystem service canonicalizes Windows 8.3 paths. Use the same
+  // physical directory spelling for exact cwd/replay/fork assertions.
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "trellis-native-directory-")));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const roots = [join(dir, "A"), join(dir, "B")];
   for (const [index, root] of roots.entries()) {
