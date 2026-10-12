@@ -5,11 +5,15 @@ import { SubagentRuntime } from "@deepseek-ai/dsh-subagent";
 import { SessionQueryEngine } from "@deepseek-ai/dsh-session-query";
 import { sessionRuntime } from "./helpers/session-runtime.js";
 import { registerWaitTool } from "../lib/wait-tool.js";
+import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
+import { mountWorkingDirectory } from "./helpers/working-directory-runtime.js";
 
 test("wait consumes the real profile-backed catalog/projection/query and live Session store", {
   skip: typeof settingsModule.SettingsForms !== "function",
 }, async (t) => {
   const ctx = await sessionRuntime(t);
+  await ctx.plugin(SystemPrompt).await();
+  await mountWorkingDirectory(ctx);
   await ctx.plugin(SubagentRuntime).await();
   await ctx.plugin(SessionQueryEngine).await();
   await ctx.fiber.await();

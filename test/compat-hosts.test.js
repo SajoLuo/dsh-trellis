@@ -7,6 +7,7 @@ const original = {
   devDependencies: {
     "@deepseek-ai/dsh-agent-loop": "baseline",
     "@deepseek-ai/dsh-ptc-runtime": "baseline",
+    "@deepseek-ai/dsh-invariants": "baseline",
     "@deepseek-ai/cordis": "baseline",
     react: "19.2.8",
   },
@@ -16,11 +17,14 @@ for (const version of SUPPORTED_HOSTS) {
     const before = structuredClone(original);
     const manifest = createCompatManifest(original, version);
     const legacy = ["0.1.5-rc.2", "0.1.6-alpha.2"].includes(version);
+    const alpha = version === "0.2.1-alpha.2";
     const deps = manifest.devDependencies;
-    assert.equal(deps["@deepseek-ai/cordis"], legacy ? "4.0.2" : "4.0.4");
-    assert.equal(deps["@deepseek-ai/schemastery"], legacy ? "3.18.2" : "3.18.4");
-    assert.equal(deps["@deepseek-ai/cordis-plugin-loader"], legacy ? "1.0.3" : "1.0.5");
-    assert.equal(deps["@deepseek-ai/cordis-plugin-include"], legacy ? "1.0.7" : "1.0.9");
+    assert.equal(deps["@deepseek-ai/cordis"], alpha ? "4.0.5-alpha.1" : legacy ? "4.0.2" : "4.0.4");
+    assert.equal(deps["@deepseek-ai/schemastery"], alpha ? "3.18.5-alpha.1" : legacy ? "3.18.2" : "3.18.4");
+    assert.equal(deps["@deepseek-ai/cordis-plugin-loader"], alpha ? "1.0.6-alpha.1" : legacy ? "1.0.3" : "1.0.5");
+    assert.equal(deps["@deepseek-ai/cordis-plugin-include"], alpha ? "1.0.10-alpha.1" : legacy ? "1.0.7" : "1.0.9");
+    assert.equal(deps["@deepseek-ai/dsh-invariants"], undefined);
+    assert.equal(deps["@deepseek-ai/dsh-working-directory"], alpha ? version : undefined);
     assert.equal(deps["@deepseek-ai/dsh-agent-loop"], version);
     const oldRuntime = version === "0.1.5-rc.2";
     assert.equal(deps[`@deepseek-ai/dsh-${oldRuntime ? "code" : "ptc"}-runtime`], version);

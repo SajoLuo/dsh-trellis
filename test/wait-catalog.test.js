@@ -63,7 +63,7 @@ for (const stopReason of ["completed", "error", "aborted"]) {
     release([row]);
     const result = await pending;
     assert.equal(result.stopReason, stopReason);
-    assert.equal(result.settlementNoticeQueued, true);
+    assert.equal(result.settlementNoticeQueued, false);
     assert.equal(h.listeners.size, 0);
   });
 }

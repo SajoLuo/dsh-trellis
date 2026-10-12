@@ -6,6 +6,7 @@ import SessionStore from "@deepseek-ai/dsh-session";
 import SessionProjectionRegistry from "@deepseek-ai/dsh-session-projection";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import ToolRuntime from "@deepseek-ai/dsh-tools";
+import { mountWorkingDirectory } from "./working-directory-runtime.js";
 
 export async function agentRuntime(t) {
   const ctx = new Context();
@@ -14,6 +15,7 @@ export async function agentRuntime(t) {
   await ctx.plugin(SessionStore);
   await ctx.plugin(SessionProjectionRegistry);
   await ctx.plugin(SystemPrompt, { personaPrefix: "", personaSuffix: "" });
+  await mountWorkingDirectory(ctx);
   await ctx.plugin(ToolRuntime);
   await ctx.plugin(AgentRegistry);
   await ctx.plugin(AgentLoop, { agents: [] });

@@ -83,9 +83,12 @@ test("trellis_wait resolves from the native settlement event and cleans up", asy
     runId: "run-1",
     provider: "spawn",
     assistantOutputBlocks: 1,
-    settlementNoticeQueued: true,
+    settlementNoticeQueued: false,
   });
   assert.equal(state.listenerCount(), 0);
+  const rendered = state.tool.output.render({}, await pending)[0].text;
+  assert.match(rendered, /delivery is unverified/);
+  assert.doesNotMatch(rendered, /notice is queued/);
 });
 
 test("trellis_wait returns immediately for an inactive direct child", async () => {

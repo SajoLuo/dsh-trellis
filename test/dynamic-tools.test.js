@@ -154,7 +154,7 @@ for (const toolUpdate of [undefined, "addition-only", "in-history"]) {
     assert.deepEqual(toolNames(compacted), ["trellis_wait"]);
     assert.equal(compacted.tools.some((tool) => tool.deferLoading), false);
     assert.equal(compacted.messages.some((message) => message.role === "developer"), false);
-    assert.equal(compacted.messages.filter((message) => message.role === "user" && !isBreadcrumbMessage(message)).length, 7);
+    assert.equal(compacted.messages.filter((message) => message.role === "user" && message.source?.kind === "user").length, 7);
     assert.equal(crumbs(restored).length, 1, "replay history remains isolated");
     assert.equal(crumbs(forked).length, 1, "fork history remains isolated");
   });
