@@ -12,19 +12,40 @@ const original = {
     react: "19.2.8",
   },
 };
-for (const version of SUPPORTED_HOSTS) {
+// Independent expectations: neither missing a host nor accidentally assigning
+// it another release's toolchain should be hidden by iterating the production map.
+const expected = {
+  "0.1.5-rc.2": ["4.0.2", "3.18.2", "1.0.7", "1.0.3", false],
+  "0.1.6-alpha.2": ["4.0.2", "3.18.2", "1.0.7", "1.0.3", false],
+  "0.1.7-rc.1": ["4.0.4", "3.18.4", "1.0.9", "1.0.5", false],
+  "0.1.7-rc.2": ["4.0.4", "3.18.4", "1.0.9", "1.0.5", false],
+  "0.2.0-rc.1": ["4.0.4", "3.18.4", "1.0.9", "1.0.5", false],
+  "0.2.0-rc.2": ["4.0.4", "3.18.4", "1.0.9", "1.0.5", false],
+  "0.2.1-alpha.2": ["4.0.5-alpha.1", "3.18.5-alpha.1", "1.0.10-alpha.1", "1.0.6-alpha.1", true],
+  "0.2.1-alpha.3": ["4.0.5-alpha.2", "3.18.5-alpha.2", "1.0.10-alpha.2", "1.0.6-alpha.2", true],
+  "0.2.1-alpha.4": ["4.0.5-alpha.2", "3.18.5-alpha.2", "1.0.10-alpha.2", "1.0.6-alpha.2", true],
+  "0.2.1-alpha.5": ["4.0.5-alpha.2", "3.18.5-alpha.2", "1.0.10-alpha.2", "1.0.6-alpha.2", true],
+  "0.2.1-rc.1": ["4.0.5", "3.18.5", "1.0.10", "1.0.6", true],
+  "0.2.1-rc.2": ["4.0.5", "3.18.5", "1.0.10", "1.0.6", true],
+};
+
+test("compat hosts explicitly include every certified historical and current target", () => {
+  assert.deepEqual(SUPPORTED_HOSTS, Object.keys(expected));
+});
+
+for (const [version, [cordis, schemastery, include, loader, workingDirectory]] of Object.entries(expected)) {
   test(`compat fixture pins the published toolchain for ${version}`, () => {
     const before = structuredClone(original);
     const manifest = createCompatManifest(original, version);
-    const legacy = ["0.1.5-rc.2", "0.1.6-alpha.2"].includes(version);
-    const alpha = version === "0.2.1-alpha.2";
     const deps = manifest.devDependencies;
-    assert.equal(deps["@deepseek-ai/cordis"], alpha ? "4.0.5-alpha.1" : legacy ? "4.0.2" : "4.0.4");
-    assert.equal(deps["@deepseek-ai/schemastery"], alpha ? "3.18.5-alpha.1" : legacy ? "3.18.2" : "3.18.4");
-    assert.equal(deps["@deepseek-ai/cordis-plugin-loader"], alpha ? "1.0.6-alpha.1" : legacy ? "1.0.3" : "1.0.5");
-    assert.equal(deps["@deepseek-ai/cordis-plugin-include"], alpha ? "1.0.10-alpha.1" : legacy ? "1.0.7" : "1.0.9");
+    assert.equal(deps["@deepseek-ai/cordis"], cordis);
+    assert.equal(deps["@deepseek-ai/schemastery"], schemastery);
+    assert.equal(deps["@deepseek-ai/cordis-plugin-loader"], loader);
+    assert.equal(deps["@deepseek-ai/cordis-plugin-include"], include);
     assert.equal(deps["@deepseek-ai/dsh-invariants"], undefined);
-    assert.equal(deps["@deepseek-ai/dsh-working-directory"], alpha ? version : undefined);
+    for (const name of ["fs", "fs-local", "working-directory"]) {
+      assert.equal(deps[`@deepseek-ai/dsh-${name}`], workingDirectory ? version : undefined);
+    }
     assert.equal(deps["@deepseek-ai/dsh-agent-loop"], version);
     const oldRuntime = version === "0.1.5-rc.2";
     assert.equal(deps[`@deepseek-ai/dsh-${oldRuntime ? "code" : "ptc"}-runtime`], version);
@@ -37,5 +58,7 @@ for (const version of SUPPORTED_HOSTS) {
   });
 }
 test("compat fixture rejects an unverified host instead of guessing its dependencies", () => {
-  assert.throws(() => createCompatManifest(original, "0.1.7-rc.3"), /Supported test hosts/);
+  for (const version of ["0.1.7-rc.3", "0.2.1-rc.3", "0.2.1", "constructor", "__proto__"]) {
+    assert.throws(() => createCompatManifest(original, version), /Supported test hosts/);
+  }
 });
