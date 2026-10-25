@@ -395,6 +395,37 @@ async function temporaryProject(t) {
   return { root, sessions, task, taskJson };
 }
 
+test("a reused blank session keeps its binding and injects once on its first submission", async (t) => {
+  const project = await temporaryProject(t);
+  const { ctx, agent, run } = await preStepRuntime(t, {}, project.root);
+  const blank = agent.session;
+  const identity = dshContextKey(blank.header.id);
+  const pointer = join(project.sessions, `${identity}.json`);
+  const binding = JSON.stringify({ current_task: project.task });
+  await writeFile(pointer, binding);
+
+  // Model the plugin boundary after navigation; the real New Session UI is
+  // verified separately, not reimplemented by this test.
+  agent.session = ctx.sessions.create("other-conversation", { meta: { cwd: project.root } });
+  const other = (await run({ step: 1 })).messages.find(isBreadcrumbMessage);
+  assert.equal(other.source.status, "no_task");
+  assert.equal(other.source.task, null);
+
+  agent.session = blank;
+  assert.equal(blank.snapshotEvents().length, 0, "navigation alone does not commit a draft or breadcrumb");
+  const submitted = prompt("Keep this restored draft and its native task binding.");
+  const first = await run({ step: 1, messages: [submitted] });
+  const message = first.messages.find(isBreadcrumbMessage);
+  assert.equal(message.source.status, "planning");
+  assert.equal(message.source.task, project.task);
+  assert.equal(first.messages.filter(isBreadcrumbMessage).length, 1);
+  assert.ok(first.messages.includes(submitted), "the submitted draft is preserved");
+  for (const item of first.messages) blank.append("user/message", item, { surfaceOp: "append" });
+  assert.equal((await run()).messages.some(isBreadcrumbMessage), false);
+  assert.equal(dshContextKey(agent.session.header.id), identity);
+  assert.equal(await readFile(pointer, "utf8"), binding);
+});
+
 test("pre-step isolates real session files and recovers task_error across settings reload and unbind", async (t) => {
   const project = await temporaryProject(t);
   const { agent, state, run } = await preStepRuntime(t, {}, project.root);

@@ -27,6 +27,7 @@ const expected = {
   "0.2.1-alpha.5": ["4.0.5-alpha.2", "3.18.5-alpha.2", "1.0.10-alpha.2", "1.0.6-alpha.2", true],
   "0.2.1-rc.1": ["4.0.5", "3.18.5", "1.0.10", "1.0.6", true],
   "0.2.1-rc.2": ["4.0.5", "3.18.5", "1.0.10", "1.0.6", true],
+  "0.2.1-rc.3": ["4.0.5", "3.18.5", "1.0.10", "1.0.6", true],
 };
 
 test("compat hosts explicitly include every certified historical and current target", () => {
@@ -58,7 +59,7 @@ for (const [version, [cordis, schemastery, include, loader, workingDirectory]] o
   });
 }
 test("compat fixture rejects an unverified host instead of guessing its dependencies", () => {
-  for (const version of ["0.1.7-rc.3", "0.2.1-rc.3", "0.2.1", "constructor", "__proto__"]) {
+  for (const version of ["0.1.7-rc.3", "0.2.1-rc.4", "0.2.1", "constructor", "__proto__"]) {
     assert.throws(() => createCompatManifest(original, version), /Supported test hosts/);
   }
 });
