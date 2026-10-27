@@ -27,10 +27,10 @@ dsh plugin --profile tui add dsh-trellis
 
 DSH `0.2.0-rc.2` 的 macOS / Windows 桌面端可在菜单栏“Manage dsh command”中安装或管理内置 `dsh` 命令，无需单独安装 Node 或 pnpm。先用 `dsh --version` 确认 PATH 中实际调用的版本；旧的全局 CLI 可能与桌面端不同。桌面端默认使用 `desktop` profile，其他 profile 仍需分别安装。
 
-新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.15` 时，在插件页输入 `dsh-trellis@0.1.15`，或显式安装到实际使用的 profile：
+新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.16` 时，在插件页输入 `dsh-trellis@0.1.16`，或显式安装到实际使用的 profile：
 
 ```powershell
-dsh plugin --profile desktop add dsh-trellis@0.1.15
+dsh plugin --profile desktop add dsh-trellis@0.1.16
 # Web / headless 用户将 desktop 替换为对应 profile 名称。
 ```
 
@@ -62,6 +62,11 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。现有 `engines.dsh` 和 Host peer 范围已接纳 `0.2.1-rc.4`，无需为每个预发布标签追加范围。`0.2.1-alpha.4` 起宿主优先检查显式 `engines.dsh`，仅未声明时才回退 DSH peer；其 `includePrerelease: true` 规则与 npm 默认匹配不同。通过准入不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。开发基线固定为 `0.2.0-rc.1`，隔离回归目标见开发章节的十四个明确宿主，不代表测试了范围内所有版本。Web 配置只在具备对应 client surface 的 profile 中加载。参见[官方版本声明迁移说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.md)。
 
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
+
+### 0.1.16：OIDC 发布自动化
+
+- 增加指定标签的手动 OIDC 发布工作流，复用同一提交的 Windows/Linux 完整测试矩阵；不保存长期 npm 发布令牌。
+- 核对 main 历史、包名和版本后才构建发布，不改插件运行时代码、依赖或兼容范围。
 
 ### 0.1.15：DSH 0.2.1-rc.4 兼容回归
 
@@ -219,6 +224,8 @@ gh workflow run publish.yml --repo SajoLuo/dsh-trellis --ref main -f tag=v0.1.16
 ```
 
 GitHub-hosted runner 通过 OIDC 获取临时发布凭据并生成 provenance。这里的授权属于指定发布流程；本机直接运行 `npm publish` 仍按 npm 的交互认证规则执行。首次 OIDC 真发布前，不把配置或本地检查视为认证已经验证成功。
+
+新 Trusted Publisher 创建后，需在 48 小时内成功发布一次才能完成验证并免于过期。过期后须重新创建连接；不要把待验证状态当作已完成端到端验证。参见 [npm 可信发布连接的验证期限](https://github.blog/changelog/2026-10-02-unvalidated-npm-trusted-publishing-configurations-now-expire/)。
 
 ## License
 
