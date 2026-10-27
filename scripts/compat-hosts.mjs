@@ -14,11 +14,12 @@ const TOOLCHAINS = new Map([
   ["0.2.1-rc.1", ["4.0.5", "3.18.5", "1.0.10", "1.0.6"]],
   ["0.2.1-rc.2", ["4.0.5", "3.18.5", "1.0.10", "1.0.6"]],
   ["0.2.1-rc.3", ["4.0.5", "3.18.5", "1.0.10", "1.0.6"]],
+  ["0.2.1-rc.4", ["4.0.5", "3.18.5", "1.0.10", "1.0.6"]],
 ]);
 export const SUPPORTED_HOSTS = Object.freeze([...TOOLCHAINS.keys()]);
 const workingDirectoryHosts = new Set([
   "0.2.1-alpha.2", "0.2.1-alpha.3", "0.2.1-alpha.4", "0.2.1-alpha.5",
-  "0.2.1-rc.1", "0.2.1-rc.2", "0.2.1-rc.3",
+  "0.2.1-rc.1", "0.2.1-rc.2", "0.2.1-rc.3", "0.2.1-rc.4",
 ]);
 
 export function createCompatManifest(original, version) {

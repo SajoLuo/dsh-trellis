@@ -27,10 +27,10 @@ dsh plugin --profile tui add dsh-trellis
 
 DSH `0.2.0-rc.2` 的 macOS / Windows 桌面端可在菜单栏“Manage dsh command”中安装或管理内置 `dsh` 命令，无需单独安装 Node 或 pnpm。先用 `dsh --version` 确认 PATH 中实际调用的版本；旧的全局 CLI 可能与桌面端不同。桌面端默认使用 `desktop` profile，其他 profile 仍需分别安装。
 
-新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.14` 时，在插件页输入 `dsh-trellis@0.1.14`，或显式安装到实际使用的 profile：
+新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.15` 时，在插件页输入 `dsh-trellis@0.1.15`，或显式安装到实际使用的 profile：
 
 ```powershell
-dsh plugin --profile desktop add dsh-trellis@0.1.14
+dsh plugin --profile desktop add dsh-trellis@0.1.15
 # Web / headless 用户将 desktop 替换为对应 profile 名称。
 ```
 
@@ -59,9 +59,14 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 
 `file:` 插件会作为 profile 内的 pnpm 快照安装；拉取源码更新后，尤其是版本新增文件时，需要先 remove 再 add 刷新该 profile。外部 CLI 刷新快照后重启对应进程，不要假定源码目录变化会自动热更新。
 
-配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。现有 `engines.dsh` 和 Host peer 范围已接纳 `0.2.1-rc.3`，无需为每个预发布标签追加范围。`0.2.1-alpha.4` 起宿主优先检查显式 `engines.dsh`，仅未声明时才回退 DSH peer；其 `includePrerelease: true` 规则与 npm 默认匹配不同。通过准入不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。开发基线固定为 `0.2.0-rc.1`，隔离回归目标见开发章节的十三个明确宿主，不代表测试了范围内所有版本。Web 配置只在具备对应 client surface 的 profile 中加载。参见[官方版本声明迁移说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.md)。
+配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。现有 `engines.dsh` 和 Host peer 范围已接纳 `0.2.1-rc.4`，无需为每个预发布标签追加范围。`0.2.1-alpha.4` 起宿主优先检查显式 `engines.dsh`，仅未声明时才回退 DSH peer；其 `includePrerelease: true` 规则与 npm 默认匹配不同。通过准入不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。开发基线固定为 `0.2.0-rc.1`，隔离回归目标见开发章节的十四个明确宿主，不代表测试了范围内所有版本。Web 配置只在具备对应 client surface 的 profile 中加载。参见[官方版本声明迁移说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.md)。
 
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
+
+### 0.1.15：DSH 0.2.1-rc.4 兼容回归
+
+- 为 npm 发布的 RC.4 增加精确工具链映射、独立预期和 Windows/Linux CI 目标；保留生产代码、依赖基线及现有版本范围。未知 RC.5 仍拒绝执行。
+- 十四个宿主的本地跨平台结果及隔离 Web 验证范围见 [RC.4 验证记录](docs/validation-dsh-0.2.1-rc.4.md)；不将本地通过写作远端 CI 或新版已发布。
 
 ### 0.1.14：DSH 0.2.1-rc.3 兼容回归
 
@@ -177,16 +182,17 @@ pnpm run test:compat 0.2.0-rc.2  # 保留 0.2.0 RC.2 回归
 pnpm run test:compat 0.2.1-alpha.2 # 新工作目录与统一 activation 契约
 pnpm run test:compat 0.2.1-rc.2 # 保留 RC.2 隔离回归
 pnpm run test:compat 0.2.1-rc.3 # RC.3 隔离回归
-pnpm run test:compat # 默认跑全部十三个显式目标
+pnpm run test:compat 0.2.1-rc.4 # RC.4 隔离回归
+pnpm run test:compat # 默认跑全部十四个显式目标
 ```
 
-GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.2.0-rc.1` 安装、客户端构建、测试、其余十二个宿主的隔离回归及打包检查。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。配置了 CI 目标不等于远端 CI 已运行，结果以对应提交为准。
+GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.2.0-rc.1` 安装、客户端构建、测试、其余十三个宿主的隔离回归及打包检查。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。配置了 CI 目标不等于远端 CI 已运行，结果以对应提交为准。
 
 RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以本地脚本化模型响应验证三种 `toolUpdate` 能力：不支持、`addition-only`、`in-history`。覆盖插件启停的工具增删消息、Settings 重挂不重复注入、混合历史的恢复/分叉投影，以及 surface 替换后重建工具基线并重新注入面包屑。等待工具另覆盖目录损坏/不存在及卸载期间查询失败的错误保留与监听器清理。该验证不调用外部模型，也不替代 Web 浏览器或真实子代理派发验收；详情见 [2026-09-28 验证记录](https://github.com/SajoLuo/dsh-trellis/blob/main/docs/validation-dsh-0.1.7-rc.2.md)。
 
 0.2 集成用例另以真实 AgentLoop / ToolRuntime / Session 和实际 `trellis_wait` 验证失败工具历史的补齐顺序、错误分类、监听器清理及继续会话的消息配对。只注入 scheduler 故障和本地模型响应，不增加运行时补丁或自动重试；旧宿主按 `ToolCallRecovery` 能力明确跳过。还覆盖“目录查询期间收到成功结算、随后查询失败”的竞争，查询错误不能被伪装成成功。
 
-`test:compat` 不改当前 checkout 的依赖，临时副本保留在系统临时目录并打印路径供检查。十三个目标采用以下明确配对，不按“非最新版本”猜测；未知宿主必须先核对官方包并补齐测试。
+`test:compat` 不改当前 checkout 的依赖，临时副本保留在系统临时目录并打印路径供检查。十四个目标采用以下明确配对，不按“非最新版本”猜测；未知宿主必须先核对官方包并补齐测试。
 
 | DSH 目标 | Cordis | Schemastery | Include | Loader |
 |---|---|---|---|---|
@@ -194,9 +200,9 @@ RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以
 | 0.1.7-rc.1 / rc.2、0.2.0-rc.1 / rc.2 | 4.0.4 | 3.18.4 | 1.0.9 | 1.0.5 |
 | 0.2.1-alpha.2 | 4.0.5-alpha.1 | 3.18.5-alpha.1 | 1.0.10-alpha.1 | 1.0.6-alpha.1 |
 | 0.2.1-alpha.3 / alpha.4 / alpha.5 | 4.0.5-alpha.2 | 3.18.5-alpha.2 | 1.0.10-alpha.2 | 1.0.6-alpha.2 |
-| 0.2.1-rc.1 / rc.2 / rc.3 | 4.0.5 | 3.18.5 | 1.0.10 | 1.0.6 |
+| 0.2.1-rc.1 / rc.2 / rc.3 / rc.4 | 4.0.5 | 3.18.5 | 1.0.10 | 1.0.6 |
 
-发布前还应使用隔离 `DSH_HOME` 启动真实 Web profile，验证配置保存/读回、整包及组件开关、重新挂载和卸载；不复用个人凭据或会话。代码 HMR、外部 CLI 快照刷新和浏览器跨宿主 release 刷新是不同验收项，不能用一次开关测试代替。当前结果与未覆盖项见 [2026-10-25 RC.3 验证记录](docs/validation-dsh-0.2.1-rc.3.md)，[RC.2 记录](docs/validation-dsh-0.2.1-rc.2.md)保留为历史证据。
+发布前还应使用隔离 `DSH_HOME` 启动真实 Web profile，验证配置保存/读回、整包及组件开关、重新挂载和卸载；不复用个人凭据或会话。代码 HMR、外部 CLI 快照刷新和浏览器跨宿主 release 刷新是不同验收项，不能用一次开关测试代替。当前结果与未覆盖项见 [2026-10-27 RC.4 验证记录](docs/validation-dsh-0.2.1-rc.4.md)，[RC.3 记录](docs/validation-dsh-0.2.1-rc.3.md)与 [RC.2 记录](docs/validation-dsh-0.2.1-rc.2.md)保留为历史证据。
 
 Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 生成 DSH lazy-CJS factory 到 `lib/client.js`。`pnpm pack` 会在 prepack 阶段自动重建客户端 bundle。
 
