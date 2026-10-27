@@ -206,6 +206,20 @@ RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以
 
 Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 生成 DSH lazy-CJS factory 到 `lib/client.js`。`pnpm pack` 会在 prepack 阶段自动重建客户端 bundle。
 
+## 自动发布
+
+`.github/workflows/publish.yml` 使用 npm [Trusted Publishing / OIDC](https://docs.npmjs.com/trusted-publishers/)，不保存长期 `NPM_TOKEN`。需先在 npm 的 `dsh-trellis` 包设置中绑定 GitHub 用户 `SajoLuo`、仓库 `dsh-trellis`、工作流文件名 `publish.yml`，并允许 `npm publish`；不需要单独的 dist-tag 管理权限。首次配置需要维护者交互确认。
+
+发布流程仅允许在本仓库的 `main` 手动触发，指定已有的稳定版标签。标签必须位于 main 历史中，且包名、标签版本、main 的包版本一致。工作流解析出不可变提交 SHA，让现有 Windows/Linux 完整测试矩阵和发布构建都使用同一个 SHA；测试失败或跳过整个测试任务时不发布。只有发布任务拥有 OIDC 权限，普通 push / PR 不会触发发布。
+
+启用后，由发布操作者执行，例如：
+
+```powershell
+gh workflow run publish.yml --repo SajoLuo/dsh-trellis --ref main -f tag=v0.1.16
+```
+
+GitHub-hosted runner 通过 OIDC 获取临时发布凭据并生成 provenance。这里的授权属于指定发布流程；本机直接运行 `npm publish` 仍按 npm 的交互认证规则执行。首次 OIDC 真发布前，不把配置或本地检查视为认证已经验证成功。
+
 ## License
 
 MIT

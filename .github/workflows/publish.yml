@@ -1,0 +1,71 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, e.g. v0.1.16
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'SajoLuo/dsh-trellis' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - id: release
+        name: Validate the tagged release
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          node -e 'require("node:assert/strict").match(process.env.RELEASE_TAG, /^v\d+\.\d+\.\d+$/)'
+          sha=$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")
+          git merge-base --is-ancestor "$sha" HEAD
+          git show "$sha:package.json" | node -e 'const fs = require("node:fs"), assert = require("node:assert/strict"); const tagged = JSON.parse(fs.readFileSync(0, "utf8")), current = require("./package.json"); assert.equal(tagged.name, "dsh-trellis"); assert.equal(tagged.version, process.env.RELEASE_TAG.slice(1)); assert.equal(tagged.version, current.version);'
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: release
+    uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.release.outputs.sha }}
+
+  publish:
+    needs: [release, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global pnpm@10.33.0
+      - run: pnpm install --frozen-lockfile
+      - run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          pnpm pack --pack-destination "$RUNNER_TEMP/release"
+      - run: npm publish "$RUNNER_TEMP/release/"*.tgz --access public --tag latest --provenance --ignore-scripts
