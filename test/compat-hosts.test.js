@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { satisfies } from "semver";
 import { SUPPORTED_HOSTS, createCompatManifest } from "../scripts/compat-hosts.mjs";
 
 const original = {
@@ -29,10 +31,23 @@ const expected = {
   "0.2.1-rc.2": ["4.0.5", "3.18.5", "1.0.10", "1.0.6", true],
   "0.2.1-rc.3": ["4.0.5", "3.18.5", "1.0.10", "1.0.6", true],
   "0.2.1-rc.4": ["4.0.5", "3.18.5", "1.0.10", "1.0.6", true],
+  "0.2.2-alpha.2": ["4.0.6-alpha.1", "3.18.6-alpha.1", "1.0.11-alpha.1", "1.0.7-alpha.1", true],
 };
 
 test("compat hosts explicitly include every certified historical and current target", () => {
   assert.deepEqual(SUPPORTED_HOSTS, Object.keys(expected));
+});
+
+test("manifest engines and npm peers admit the certified targets without prerelease overrides", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  for (const [host, [cordis, schemastery]] of Object.entries(expected)) {
+    assert.ok(satisfies(host, manifest.engines.dsh), host);
+    for (const [name, range] of Object.entries(manifest.peerDependencies)) {
+      const version = name === "@deepseek-ai/cordis" ? cordis
+        : name === "@deepseek-ai/schemastery" ? schemastery : host;
+      assert.ok(satisfies(version, range), `${name}@${version}`);
+    }
+  }
 });
 
 for (const [version, [cordis, schemastery, include, loader, workingDirectory]] of Object.entries(expected)) {
@@ -53,6 +68,10 @@ for (const [version, [cordis, schemastery, include, loader, workingDirectory]] o
     assert.equal(deps[`@deepseek-ai/dsh-${oldRuntime ? "code" : "ptc"}-runtime`], version);
     assert.equal(deps[`@deepseek-ai/dsh-${oldRuntime ? "ptc" : "code"}-runtime`], undefined);
     assert.equal(deps.react, original.devDependencies.react);
+    for (const executor of ["native", "ptc"]) {
+      assert.equal(deps[`@deepseek-ai/dsh-tool-executor-${executor}`],
+        version === "0.2.2-alpha.2" ? version : undefined);
+    }
     assert.equal(manifest.private, true);
     assert.equal(manifest.scripts.prepack, undefined);
     assert.equal(manifest.scripts.test, original.scripts.test);
@@ -60,7 +79,7 @@ for (const [version, [cordis, schemastery, include, loader, workingDirectory]] o
   });
 }
 test("compat fixture rejects an unverified host instead of guessing its dependencies", () => {
-  for (const version of ["0.1.7-rc.3", "0.2.1-rc.5", "0.2.1", "constructor", "__proto__"]) {
+  for (const version of ["0.1.7-rc.3", "0.2.1-rc.5", "0.2.1", "0.2.2-alpha.3", "constructor", "__proto__"]) {
     assert.throws(() => createCompatManifest(original, version), /Supported test hosts/);
   }
 });

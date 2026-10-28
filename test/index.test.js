@@ -82,11 +82,14 @@ function harness({ settings = false, projectionRegistry } = {}) {
       register(definition) {
         registrations.push(`projection:${definition.key}`);
         active.add(`projection:${definition.key}`);
-        const dispose = projectionRegistry?.register(definition);
-        return () => {
+        const registration = projectionRegistry?.register(definition);
+        const dispose = () => {
           active.delete(`projection:${definition.key}`);
-          dispose?.();
+          registration?.();
         };
+        return typeof registration?.then === "function"
+          ? Object.assign(dispose, { then: registration.then.bind(registration) })
+          : dispose;
       },
       stateOf(session, key) {
         return projectionRegistry ? projectionRegistry.stateOf(session, key) : {};
@@ -126,9 +129,8 @@ function harness({ settings = false, projectionRegistry } = {}) {
     },
     disposePlugin() {
       ctx.fiber.state = 5;
-      for (const effect of effects.filter(({ owner }) => owner === "plugin")) {
-        effect.dispose();
-      }
+      return Promise.all(effects.filter(({ owner }) => owner === "plugin")
+        .map((effect) => effect.dispose()));
     },
   };
 }
@@ -142,6 +144,57 @@ test("disabled plugin keeps only the optional settings bridge", () => {
   );
   assert.deepEqual(state.listeners, []);
   assert.deepEqual(state.registrations, ["inject:settings"]);
+  assert.deepEqual([...state.active], []);
+});
+
+test("startup waits for async projection registration and rolls back a rejected acquisition", async () => {
+  const state = harness();
+  const pending = Promise.withResolvers();
+  state.ctx.sessionProjections.register = () => pending.promise;
+  state.ctx.sessionProjections.stateOf = () => assert.fail("no legacy reads after failure");
+  const startup = apply(state.ctx, {});
+  let ready = false;
+  startup.then(() => { ready = true; }, () => {});
+  await Promise.resolve();
+  assert.equal(ready, false);
+  const failure = new Error("projection key conflict");
+  pending.reject(failure);
+  await assert.rejects(startup, (error) => error === failure);
+  assert.deepEqual([...state.active], []);
+  state.disposePlugin();
+});
+
+test("unload while acquiring a projection releases the late handle and pre-step remains unchanged", async () => {
+  const state = harness();
+  const pending = Promise.withResolvers();
+  let disposals = 0;
+  state.ctx.sessionProjections.register = () => pending.promise;
+  const startup = apply(state.ctx, {});
+  const listener = state.listeners.find(({ event }) => event === "agent/pre-step").listener;
+  const decision = { kind: "continue", messages: [] };
+  const step = listener({}, async () => decision);
+  state.disposePlugin();
+  pending.resolve({ stateOf: () => assert.fail("unloaded listener cannot read"), async dispose() { disposals++; } });
+  assert.equal(await startup, undefined);
+  assert.equal(await step, decision);
+  assert.equal(disposals, 1);
+  assert.deepEqual([...state.active], []);
+});
+
+test("runtime teardown awaits the acquired handle's asynchronous cleanup", async () => {
+  const state = harness();
+  const cleanup = Promise.withResolvers();
+  state.ctx.sessionProjections.register = async () => ({
+    stateOf: () => ({}), dispose: () => cleanup.promise,
+  });
+  await apply(state.ctx, {});
+  let finished = false;
+  const unload = state.disposePlugin().then(() => { finished = true; });
+  await Promise.resolve();
+  assert.equal(finished, false);
+  cleanup.resolve();
+  await unload;
+  assert.equal(finished, true);
   assert.deepEqual([...state.active], []);
 });
 

@@ -43,6 +43,7 @@ test("late registration replays existing Session history without exposing host s
   const session = ctx.sessions.create("late-registration");
   append(session, crumb());
   const projection = registerBreadcrumbProjection(ctx);
+  await projection.ready;
   assert.equal(projection.isVisible(session, crumb()), true);
   assert.deepEqual(ctx.sessionProjections.snapshot(session).values, {});
   assert.equal(ctx.sessionProjections.checkpoint(session)[KEY].ver, 1);
@@ -51,6 +52,7 @@ test("late registration replays existing Session history without exposing host s
 test("live projection advances from committed events without synchronous history reads", async (t) => {
   const ctx = await sessionRuntime(t);
   const projection = registerBreadcrumbProjection(ctx);
+  await projection.ready;
   const session = ctx.sessions.create("incremental");
   for (const method of ["snapshotEvents", "eventAt", "ownEvents"]) {
     t.mock.method(session, method, () => { throw new Error(`Unexpected ${method}`); });
@@ -69,6 +71,7 @@ test("live projection advances from committed events without synchronous history
 test("compaction removes visibility and an identical payload can be reinjected", async (t) => {
   const ctx = await sessionRuntime(t);
   const projection = registerBreadcrumbProjection(ctx);
+  await projection.ready;
   const session = ctx.sessions.create("compaction");
   append(session, crumb());
   replace(session, [...session.surface.nodes]);
@@ -80,6 +83,7 @@ test("compaction removes visibility and an identical payload can be reinjected",
 test("surface order wins over event sequence after an early-node replacement", async (t) => {
   const ctx = await sessionRuntime(t);
   const projection = registerBreadcrumbProjection(ctx);
+  await projection.ready;
   const session = ctx.sessions.create("surface-order");
   append(session, crumb("A"));
   append(session, crumb("B"));
@@ -92,6 +96,7 @@ test("surface order wins over event sequence after an early-node replacement", a
 test("provenance does not erase a still-visible breadcrumb", async (t) => {
   const ctx = await sessionRuntime(t);
   const projection = registerBreadcrumbProjection(ctx);
+  await projection.ready;
   const session = ctx.sessions.create("provenance");
   append(session, crumb());
   append(session, user("Other text"));
@@ -104,6 +109,7 @@ test("provenance does not erase a still-visible breadcrumb", async (t) => {
 test("resumed and forked sessions dedupe on their first read and stay isolated", async (t) => {
   const ctx = await sessionRuntime(t);
   const projection = registerBreadcrumbProjection(ctx);
+  await projection.ready;
   const parent = ctx.sessions.create("parent");
   const seed = [append(parent, crumb())];
   const resumed = ctx.sessions.create("resumed", { seed });
@@ -121,7 +127,7 @@ test("resumed and forked sessions dedupe on their first read and stay isolated",
 
 test("checkpoint JSON roundtrip and tail replay produce the same domain state", async (t) => {
   const ctx = await sessionRuntime(t);
-  registerBreadcrumbProjection(ctx);
+  await registerBreadcrumbProjection(ctx).ready;
   const session = ctx.sessions.create("checkpoint");
   const events = [append(session, crumb())];
   const checkpoint = JSON.parse(JSON.stringify(ctx.sessionProjections.checkpoint(session)));
@@ -141,6 +147,7 @@ test("registration reference counts and runtime remount preserve replay correctn
   const session = ctx.sessions.create("reload");
   const first = registerBreadcrumbProjection(ctx);
   const second = registerBreadcrumbProjection(ctx);
+  await Promise.all([first.ready, second.ready]);
   append(session, crumb());
   first.dispose();
   assert.equal(second.isVisible(session, crumb()), true);
@@ -148,6 +155,7 @@ test("registration reference counts and runtime remount preserve replay correctn
   assert.equal(ctx.sessionProjections.stateOf(session, KEY), undefined);
   assert.throws(() => second.isVisible(session, crumb()), /not registered/);
   const reloaded = registerBreadcrumbProjection(ctx);
+  await reloaded.ready;
   assert.equal(reloaded.isVisible(session, crumb()), true);
 });
 
@@ -156,7 +164,7 @@ test("Cordis unload removes only the owning plugin's projection", async (t) => {
   const fiber = ctx.plugin({
     inject: ["sessionProjections"],
     apply(owner) {
-      registerBreadcrumbProjection(owner);
+      return registerBreadcrumbProjection(owner).ready;
     },
   });
   await fiber.await();
@@ -194,4 +202,83 @@ test("production modules never read synchronous Session history", async () => {
     const source = await readFile(new URL(file, directory), "utf8");
     assert.doesNotMatch(source, /\b(?:eventAt|snapshotEvents|ownEvents)\s*\(|\bsession\.events\b/, file);
   }
+});
+
+test("async registration reads its handle without deprecated registry reads", async () => {
+  const pending = Promise.withResolvers();
+  let disposals = 0;
+  const session = { surface: { nodes: [5] } };
+  const projection = registerBreadcrumbProjection({ sessionProjections: {
+    register: () => pending.promise,
+    stateOf() { assert.fail("must read the acquired handle"); },
+  } });
+  assert.throws(() => projection.isVisible(session, crumb()), /not ready/);
+  pending.resolve({ stateOf(value) {
+    assert.equal(value, session);
+    return { 5: breadcrumbFingerprint(crumb()) };
+  }, async dispose() { disposals++; } });
+  assert.equal(await projection.ready, undefined);
+  assert.equal(projection.isVisible(session, crumb()), true);
+  await projection.dispose();
+  await projection.dispose();
+  assert.equal(disposals, 1);
+  assert.throws(() => projection.isVisible(session, crumb()), /not registered/);
+});
+
+test("async registration failure cannot read another owner's projection", async () => {
+  const failure = new Error("projection key conflict");
+  const projection = registerBreadcrumbProjection({ sessionProjections: {
+    register: () => Promise.reject(failure),
+    stateOf() { assert.fail("failed registration must not read another owner"); },
+  } });
+  await assert.rejects(projection.ready, (error) => error === failure);
+  assert.throws(() => projection.isVisible({}, crumb()), (error) => error === failure);
+  projection.dispose();
+});
+
+test("unload before an async handle arrives releases it exactly once", async () => {
+  const pending = Promise.withResolvers();
+  let disposals = 0;
+  const projection = registerBreadcrumbProjection({ sessionProjections: {
+    register: () => pending.promise,
+  } });
+  projection.dispose();
+  pending.resolve({ stateOf: () => assert.fail("unloaded handle cannot read"), async dispose() { disposals++; } });
+  await projection.ready;
+  projection.dispose();
+  assert.equal(disposals, 1);
+});
+
+test("a canceled registration rejection is observed during unload", async () => {
+  const pending = Promise.withResolvers();
+  const projection = registerBreadcrumbProjection({ sessionProjections: {
+    register: () => pending.promise,
+  } });
+  projection.dispose();
+  pending.reject(new Error("owner disposed during acquire"));
+  await projection.ready;
+});
+
+test("legacy Cordis thenable disposer resolves without a projection handle", async () => {
+  let disposals = 0;
+  const dispose = Object.assign(() => { disposals++; }, {
+    then: (resolve, reject) => Promise.resolve({}).then(resolve, reject),
+  });
+  const projection = registerBreadcrumbProjection({ sessionProjections: {
+    register: () => dispose,
+    stateOf: () => ({ 5: breadcrumbFingerprint(crumb()) }),
+  } });
+  await projection.ready;
+  assert.equal(projection.isVisible({ surface: { nodes: [5] } }, crumb()), true);
+  await projection.dispose();
+  assert.equal(disposals, 1);
+});
+
+test("a native Promise with an invalid handle fails before any registry read", async () => {
+  const projection = registerBreadcrumbProjection({ sessionProjections: {
+    register: () => Promise.resolve({}),
+    stateOf: () => assert.fail("invalid acquisition cannot read legacy state"),
+  } });
+  await assert.rejects(projection.ready, /invalid projection handle/);
+  projection.dispose();
 });

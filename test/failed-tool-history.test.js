@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { LlmAdapter, createUserMessage } from "@deepseek-ai/dsh-llm";
 import * as sessionModule from "@deepseek-ai/dsh-session";
-import { TOOL_RUNTIME_SCHEDULER } from "@deepseek-ai/dsh-tools";
+import * as toolsModule from "@deepseek-ai/dsh-tools";
 import { agentRuntime } from "./helpers/agent-runtime.js";
 import * as plugin from "../lib/index.js";
 import { isBreadcrumbMessage } from "../lib/breadcrumb.js";
@@ -51,19 +51,23 @@ for (const phase of ["execution-mode", "finalize"]) {
     const adapter = new WaitAdapter();
     ctx.llm.registerAdapter(["scripted"], adapter);
     const agent = await ctx.agentLoop.create("failure-parent", { provider: "scripted", model: "local" }, { cwd });
-    const scheduler = ctx.tools[TOOL_RUNTIME_SCHEDULER];
-    const executionMode = ctx.tools.executionMode.bind(ctx.tools);
-    const finalize = scheduler.finalize.bind(scheduler);
+    const scheduler = typeof ctx.tools.setExecutor === "function"
+      ? ctx.tools.selectExecutor(agent).pipeline
+      : ctx.tools[toolsModule.TOOL_RUNTIME_SCHEDULER];
+    const modeOwner = typeof ctx.tools.executionMode === "function" ? ctx.tools : scheduler;
+    const executionMode = modeOwner.executionMode.bind(modeOwner);
+    const completionMethod = typeof scheduler.finalize === "function" ? "finalize" : "complete";
+    const finalize = scheduler[completionMethod].bind(scheduler);
     const failure = new Error(`injected ${phase} failure`);
     // Test-only scheduler fault injection, matching the upstream recovery tests.
     // Real calls and results still pass through ToolRuntime and trellis_wait.
     if (phase === "execution-mode") {
-      ctx.tools.executionMode = (exec) => {
+      modeOwner.executionMode = (exec) => {
         if (exec.callId === "failed") throw failure;
         return executionMode(exec);
       };
     } else {
-      scheduler.finalize = (exec, result) => {
+      scheduler[completionMethod] = (exec, result) => {
         if (exec.callId === "failed") throw failure;
         return finalize(exec, result);
       };
@@ -90,8 +94,8 @@ for (const phase of ["execution-mode", "finalize"]) {
     assert.equal(listeners(), baselineListeners);
     assert.equal(agent.session.deriveMessages().filter(isBreadcrumbMessage).length, 1);
 
-    ctx.tools.executionMode = executionMode;
-    scheduler.finalize = finalize;
+    modeOwner.executionMode = executionMode;
+    scheduler[completionMethod] = finalize;
     agent.followup(prompt("Continue after checking the failure"));
     await agent.whenIdle();
     assert.equal(adapter.requests.length, 2, "the failed turn never auto-retries the tools");
