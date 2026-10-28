@@ -52,7 +52,8 @@
     "build:client": "tsdown",
     "test": "node --test \"test/*.test.js\"",
     "prepack": "pnpm run build:client",
-    "test:compat": "node scripts/test-compat.mjs"
+    "test:compat": "node scripts/test-compat.mjs",
+    "test:e2e": "node e2e/run.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2 || ^4.0.5-alpha.1 || ^4.0.6-alpha.1",

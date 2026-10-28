@@ -220,6 +220,8 @@ RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以
 
 Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 生成 DSH lazy-CJS factory 到 `lib/client.js`。`pnpm pack` 会在 prepack 阶段自动重建客户端 bundle。
 
+完整的软件链路 E2E 环境见 [e2e/README.md](e2e/README.md)：固定官方 DSH/Trellis 和锁文件，通过实际 SDK、Shell、子代理及 Node PTC 验证任务生命周期、事件等待、会话恢复和取消清理。`pnpm --dir e2e install --frozen-lockfile` 后运行 `pnpm run test:e2e --published` 可检查当前版本的 npm 包；Linux 提供独立容器。Windows 默认沙箱的 Node 子进程限制与非沙箱对照结果分别记录，模型决策使用本地脚本，不调用付费 API。
+
 ## 自动发布
 
 `.github/workflows/publish.yml` 使用 npm [Trusted Publishing / OIDC](https://docs.npmjs.com/trusted-publishers/)，不保存长期 `NPM_TOKEN`。需先在 npm 的 `dsh-trellis` 包设置中绑定 GitHub 用户 `SajoLuo`、仓库 `dsh-trellis`、工作流文件名 `publish.yml`，并允许 `npm publish`；不需要单独的 dist-tag 管理权限。首次配置需要维护者交互确认。

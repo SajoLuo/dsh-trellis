@@ -1,0 +1,13 @@
+{
+  "name": "dsh-trellis-e2e",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "pnpm": {
+    "onlyBuiltDependencies": ["@deepseek-ai/dsh-subprocess-local", "koffi", "node-pty"]
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.2-alpha.2",
+    "@mindfoldhq/trellis": "0.7.0-beta.4"
+  }
+}
