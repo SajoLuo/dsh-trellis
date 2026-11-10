@@ -29,30 +29,38 @@ test("real Loader updates volatile Config without remounting the plugin or losin
   const entry = ctx.loader.resolve(id);
   await entry.fiber.await();
   const fiber = entry.fiber;
-  const config = fiber.config;
+  // New Cordis retains raw input in config; live volatile references belong to
+  // effectiveConfig. Older hosts expose the resolved object as config instead.
+  const effectiveConfig = () => "effectiveConfig" in fiber ? fiber.effectiveConfig : fiber.config;
+  const config = effectiveConfig();
   assert.equal(typeof config.enabled.get, "function");
   assert.equal(active.size, 0);
   const replace = async (value) => {
     await entry.update({ config: value });
     await entry.fiber.await();
     assert.equal(entry.fiber, fiber);
-    assert.equal(fiber.config.enabled, config.enabled);
+    assert.equal(effectiveConfig().enabled, config.enabled);
   };
   await replace({ enabled: true, maxBytes: 512, commandsEnabled: false });
   assert.equal(active.has("tool:trellis_wait"), true);
   assert.equal(active.has("command:trellis-status"), false);
   assert.equal(resolveConfig(config).maxBytes, 512);
   const policies = new Set();
+  const configured = Promise.withResolvers();
   const provider = ctx.plugin({ provide: "settings", apply(child) {
     child.provide("settings", { configure(policy, owner) {
-      assert.equal(owner, fiber);
-      assert.deepEqual(policy, { auto: false });
       policies.add(owner);
+      configured.resolve({ policy, owner });
       return () => policies.delete(owner);
     } });
   } });
   await provider.await();
-  await ctx.fiber.await();
+  // Optional consumers activate independently of the provider/root fiber.
+  // Assert outside the hook so Cordis cannot consume a test assertion as a
+  // plugin activation error and leave the readiness promise pending.
+  const presentation = await configured.promise;
+  assert.equal(presentation.owner.ctx.fiber, fiber.ctx.fiber);
+  assert.deepEqual(presentation.policy, { auto: false });
   assert.equal(policies.size, 1);
   const tool = active.get("tool:trellis_wait");
   await provider.dispose();

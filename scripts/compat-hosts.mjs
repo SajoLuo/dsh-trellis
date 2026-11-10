@@ -15,13 +15,19 @@ const TOOLCHAINS = new Map([
   ["0.2.1-rc.2", ["4.0.5", "3.18.5", "1.0.10", "1.0.6"]],
   ["0.2.1-rc.3", ["4.0.5", "3.18.5", "1.0.10", "1.0.6"]],
   ["0.2.1-rc.4", ["4.0.5", "3.18.5", "1.0.10", "1.0.6"]],
+  ["0.2.1-rc.5", ["4.0.5", "3.18.5", "1.0.10", "1.0.6"]],
   ["0.2.2-alpha.2", ["4.0.6-alpha.1", "3.18.6-alpha.1", "1.0.11-alpha.1", "1.0.7-alpha.1"]],
+  ["0.2.2-alpha.3", ["4.0.6-alpha.2", "3.18.6-alpha.2", "1.0.11-alpha.2", "1.0.7-alpha.2"]],
+  ["0.2.2-rc.1", ["4.1.0", "3.19.0", "1.1.0", "1.1.0"]],
 ]);
 export const SUPPORTED_HOSTS = Object.freeze([...TOOLCHAINS.keys()]);
 const workingDirectoryHosts = new Set([
   "0.2.1-alpha.2", "0.2.1-alpha.3", "0.2.1-alpha.4", "0.2.1-alpha.5",
-  "0.2.1-rc.1", "0.2.1-rc.2", "0.2.1-rc.3", "0.2.1-rc.4",
-  "0.2.2-alpha.2",
+  "0.2.1-rc.1", "0.2.1-rc.2", "0.2.1-rc.3", "0.2.1-rc.4", "0.2.1-rc.5",
+  "0.2.2-alpha.2", "0.2.2-alpha.3", "0.2.2-rc.1",
+]);
+const executorHosts = new Set([
+  "0.2.2-alpha.2", "0.2.2-alpha.3", "0.2.2-rc.1",
 ]);
 
 export function createCompatManifest(original, version) {
@@ -52,7 +58,7 @@ export function createCompatManifest(original, version) {
       manifest.devDependencies[`@deepseek-ai/dsh-${name}`] = version;
     }
   }
-  if (version === "0.2.2-alpha.2") {
+  if (executorHosts.has(version)) {
     for (const executor of ["native", "ptc"]) {
       manifest.devDependencies[`@deepseek-ai/dsh-tool-executor-${executor}`] = version;
     }
