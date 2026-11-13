@@ -4,13 +4,13 @@ DeepSeek Harness (dsh) host 插件：把 [Trellis](https://github.com/mindfold-a
 
 1. **每轮 workflow-state 面包屑注入** — 在每个 `agent/pre-step`，解析项目 `.trellis/workflow.md` 的 `[workflow-state:*]` 块 + 活跃任务状态（no_task / task_error / planning / in_progress），把对应面包屑注入会话（与 `dsh-agent-instructions` 的注入管道相同）。未变化不重复注入；被压缩后自动重注入；提示词里出现独立单词 `no-trellis` 可跳过当轮。
 2. **隔离的原生会话上下文身份** — 从当前 agent 的 DSH 原生 session header 生成受管的 `DSH_TRELLIS_CONTEXT_ID`，让 `task.py start/create/current` 解析到会话级 active-task 指针，并在子代理身份不同于 shell 自身 session 时优先使用被转发的身份；插件命令启动的子进程也显式使用同一个 DSH 身份。
-3. **原生子代理同步** — 安装插件后，Trellis 角色可用 DSH continuable 后台子代理；主会话先继续独立工作，耗尽后可调用事件驱动的 `trellis_wait`。它监听 DSH 的 `subagent/end`，利用 lifecycle 自带的 run/provider/output-block 元数据返回 `completed / failed / aborted / unknown` 的 fail-closed 结论。`error`、`max-tokens`、`refusal` 和未来未知失败原因都不会被误报成通过。rc.8 在父会话 idle 时也会用原生 settlement notice 唤醒，因此已经结束当前轮时无需额外调用 wait。
+3. **原生子代理同步** — 安装插件后，Trellis 角色可用 DSH continuable 后台子代理；主会话先继续独立工作，耗尽后可调用事件驱动的 `trellis_wait`。它监听 DSH 的 `subagent/end`，利用 lifecycle 自带的 run/provider/output-block 元数据返回 `completed / failed / aborted / unknown` 的 fail-closed 结论。`error`、`max-tokens`、`refusal` 和未来未知失败原因都不会被误报成通过。宿主提供可靠的原生通知/yield 路径时，父会话也可结束当前轮等待唤醒；仍须读取实际结果与报告。
 4. **`/trellis` 命令** — `/trellis-status`（活跃任务 + git 状态）、`/trellis-finish`（只读检查 + 安全收尾清单，不提前清 active-task 指针）。命令输出不进模型历史；真正的会话收尾走技能面 `/trellis-finish-work`，由技能先归档再写 journal。rc.8 下两条零输入命令使用 `recordInput: false`，并显式拒绝参数和图片附件，避免静默忽略输入。
 5. **Web 配置菜单** — DSH `0.1.7-rc.1` 的“插件 → dsh-trellis”详情页直接显示全部六个配置项；保留 `0.1.6-alpha.2` 详情页与旧版 RC 卡片。新版支持带修订号的原子保存、恢复 profile 继承值和冲突时保留草稿。配置里的 `enabled=false` 会停用工作流功能但保留表单；插件管理器的整包或组件开关则会连同表单一起卸载。
 
 非 Trellis 项目不注入面包屑；命令只有被用户显式调用时才会检查并返回“未初始化 Trellis”。
 
-这是 Trellis DSH 适配的**可选伴侣插件**，不是使用 `trellis init --dsh` 的前置条件。存在 `trellis_wait` 时可使用 continuable 后台派发和事件汇合。未安装插件时，只有工具 schema 明确支持 `run_in_background` 的旧宿主才设置 `run_in_background: false`；DSH `0.2.1-alpha.2` 已移除该参数，统一立即返回 child ID，应让父会话结束当前轮、由原生完成通知唤醒，或直接在主会话完成工作。收到 child ID 不代表依赖步骤通过；没有可用的事件汇合或可靠原生通知路径时不要派发。所有路径都禁止 sleep 或轮询，Trellis CLI 不会自动安装任何 DSH profile 插件。
+这是 Trellis DSH 适配的**可选伴侣插件**，不是使用 `trellis init --dsh` 的前置条件。工具 schema 明确支持当前回执时，`trellis_wait` 可用于 continuable 后台派发和事件汇合。DSH `0.2.2-rc.2` 返回名称；将该名称传入明确接受 name 的 `subagent_id` 参数，结果的 `subagentId` 仍是解析后的原生 Session id。旧插件暴露同名工具不代表支持具名协议。未安装兼容插件时，只有 schema 明确支持 `run_in_background` 的旧宿主才设置 `run_in_background: false`；`0.2.1-alpha.2` 已移除此参数，使用可靠的原生通知/yield 路径，或直接在主会话完成工作。启动回执不代表依赖步骤通过；没有可靠同步路径时不要派发。所有路径都禁止 sleep 或轮询，Trellis CLI 不会自动安装任何 DSH profile 插件。
 
 ## 安装
 
@@ -59,11 +59,19 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 
 `file:` 插件会作为 profile 内的 pnpm 快照安装；拉取源码更新后，尤其是版本新增文件时，需要先 remove 再 add 刷新该 profile。外部 CLI 刷新快照后重启对应进程，不要假定源码目录变化会自动热更新。
 
-配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。`0.2.1-alpha.4` 起宿主优先检查显式 `engines.dsh`，仅未声明时才回退 DSH peer；其 `includePrerelease: true` 规则与 npm 默认匹配不同。现有 npm peer 和 engine 范围已允许 `0.2.2-rc.1`、Cordis `4.1.0` 和 Schemastery `3.19.0`，无需额外放宽；通过准入仍不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。开发基线固定为 `0.2.0-rc.1`，隔离回归目标见开发章节的十八个明确宿主，不代表测试了范围内所有版本。Web 配置只在具备对应 client surface 的 profile 中加载。参见[官方版本声明迁移说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.md)。
+配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。`0.2.1-alpha.4` 起宿主优先检查显式 `engines.dsh`，仅未声明时才回退 DSH peer；其 `includePrerelease: true` 规则与 npm 默认匹配不同。现有 npm peer 和 engine 范围已允许 `0.2.2-rc.2`、Cordis `4.1.0` 和 Schemastery `3.19.0`，无需额外放宽；通过准入仍不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。开发基线固定为 `0.2.0-rc.1`，隔离回归目标见开发章节的十九个明确宿主，不代表测试了范围内所有版本。Web 配置只在具备对应 client surface 的 profile 中加载。参见[官方版本声明迁移说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.md)。
 
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
 
 DSH `0.2.2-alpha.2` 将工具执行移至独立 executor。自定义 profile 除 `tools` 外还需选择 `@deepseek-ai/dsh-tool-executor-native`，或具备 PTC runtime 的 `@deepseek-ai/dsh-tool-executor-ptc`；标准宿主负责组装。插件只注册 `trellis_wait`，使用宿主选定的执行器，不自行切换执行模式。
+
+### 0.1.19：DSH 0.2.2-rc.2 适配
+
+- `trellis_wait` 保留 `subagent_id` 参数，按宿主能力接受名称或原生 Session id。RC.2 使用直接目录的 Session Query observation，及时释放观察对象；树根监听校验直接创建者，查询前订阅，避免名称解析和目录读取期间漏掉结算。
+- 自定义 RC.2 profile 需装配内置 `sessionQuery` 和 `sessions` 服务；缺失服务或目录不可读会明确失败，不会被当成空目录或成功结算。
+- 补齐 RC.2 的精确工具链与独立兼容预期，Windows/Linux CI 从单一清单覆盖十九个宿主。运行时 peer 和开发基线保持不变。
+- Native/PTC E2E 固定 RC.2，实际验证具名回执、`send_message({ agent: "lead" })`、按名称等待及稳定 Session 身份。实测结果与默认沙箱限制见 [RC.2 验证记录](docs/validation-dsh-0.2.2-rc.2.md)。
+- npm `0.1.18` 不包含这些修正。源码验收使用正常 prepack 的本地 tarball；正式发布状态以 `v0.1.19` 对应工作流及 npm 为准。
 
 ### 0.1.18：DSH 0.2.2-rc.1 兼容回归
 
@@ -204,16 +212,17 @@ pnpm run test:compat 0.2.1-rc.4 # RC.4 隔离回归
 pnpm run test:compat 0.2.1-rc.5 # 补齐 RC.5 隔离回归
 pnpm run test:compat 0.2.2-alpha.2 # 异步 projection handle 与独立 executor
 pnpm run test:compat 0.2.2-alpha.3 0.2.2-rc.1 # 新版 Cordis 生效配置与生命周期
-pnpm run test:compat # 默认跑全部十八个显式目标
+pnpm run test:compat 0.2.2-rc.2 # 具名子代理与树根结算事件
+pnpm run test:compat # 默认跑全部十九个显式目标
 ```
 
-GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.2.0-rc.1` 安装、客户端构建、测试、全部十八个宿主的隔离回归及打包检查。兼容清单来自 `scripts/compat-hosts.mjs`，测试另有独立期望值防止漏项或错误依赖配对。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。配置了 CI 目标不等于远端 CI 已运行，结果以对应提交为准。
+GitHub Actions 配置在 Windows / Linux 的 Node 24 环境执行锁定的 `0.2.0-rc.1` 安装、客户端构建、测试、全部十九个宿主的隔离回归及打包检查。兼容清单来自 `scripts/compat-hosts.mjs`，测试另有独立期望值防止漏项或错误依赖配对。测试覆盖真实 Session/projection 的恢复、分叉、压缩和 checkpoint，临时项目的精确绑定与任务错误恢复，以及新版真实 Loader 的 volatile 更新、子代理目录/查询/驻留状态；新版专属测试在旧宿主明确跳过。另有编译客户端 React 渲染、slot 生命周期、原子保存与拒绝写入测试。配置了 CI 目标不等于远端 CI 已运行，结果以对应提交为准。
 
 RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以本地脚本化模型响应验证三种 `toolUpdate` 能力：不支持、`addition-only`、`in-history`。覆盖插件启停的工具增删消息、Settings 重挂不重复注入、混合历史的恢复/分叉投影，以及 surface 替换后重建工具基线并重新注入面包屑。等待工具另覆盖目录损坏/不存在及卸载期间查询失败的错误保留与监听器清理。该验证不调用外部模型，也不替代 Web 浏览器或真实子代理派发验收；详情见 [2026-09-28 验证记录](https://github.com/SajoLuo/dsh-trellis/blob/main/docs/validation-dsh-0.1.7-rc.2.md)。
 
 0.2 集成用例另以真实 AgentLoop / ToolRuntime / Session 和实际 `trellis_wait` 验证失败工具历史的补齐顺序、错误分类、监听器清理及继续会话的消息配对。只注入 scheduler 故障和本地模型响应，不增加运行时补丁或自动重试；旧宿主按 `ToolCallRecovery` 能力明确跳过。还覆盖“目录查询期间收到成功结算、随后查询失败”的竞争，查询错误不能被伪装成成功。
 
-`test:compat` 不改当前 checkout 的依赖，临时副本保留在系统临时目录并打印路径供检查。十八个目标采用以下明确配对，不按“非最新版本”猜测；未知宿主必须先核对官方包并补齐测试。
+`test:compat` 不改当前 checkout 的依赖，临时副本保留在系统临时目录并打印路径供检查。十九个目标采用以下明确配对，不按“非最新版本”猜测；未知宿主必须先核对官方包并补齐测试。
 
 | DSH 目标 | Cordis | Schemastery | Include | Loader |
 |---|---|---|---|---|
@@ -224,7 +233,7 @@ RC.2 集成用例运行真实 AgentLoop、Loader、ToolRuntime 和 Session，以
 | 0.2.1-rc.1 / rc.2 / rc.3 / rc.4 / rc.5 | 4.0.5 | 3.18.5 | 1.0.10 | 1.0.6 |
 | 0.2.2-alpha.2 | 4.0.6-alpha.1 | 3.18.6-alpha.1 | 1.0.11-alpha.1 | 1.0.7-alpha.1 |
 | 0.2.2-alpha.3 | 4.0.6-alpha.2 | 3.18.6-alpha.2 | 1.0.11-alpha.2 | 1.0.7-alpha.2 |
-| 0.2.2-rc.1 | 4.1.0 | 3.19.0 | 1.1.0 | 1.1.0 |
+| 0.2.2-rc.1 / rc.2 | 4.1.0 | 3.19.0 | 1.1.0 | 1.1.0 |
 
 发布前还应使用隔离 `DSH_HOME` 启动真实 Web profile，验证配置保存/读回、整包及组件开关、重新挂载和卸载；不复用个人凭据或会话。代码 HMR、外部 CLI 快照刷新和浏览器跨宿主 release 刷新是不同验收项，不能用一次开关测试代替。当前结果与未覆盖项见 [2026-10-28 Alpha.2 验证记录](docs/validation-dsh-0.2.2-alpha.2.md)，[RC.4 记录](docs/validation-dsh-0.2.1-rc.4.md)、[RC.3 记录](docs/validation-dsh-0.2.1-rc.3.md)与 [RC.2 记录](docs/validation-dsh-0.2.1-rc.2.md)保留为历史证据。
 

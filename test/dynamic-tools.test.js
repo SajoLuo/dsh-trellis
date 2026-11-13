@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import Loader from "@deepseek-ai/cordis-plugin-loader";
 import { LlmAdapter, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { Session } from "@deepseek-ai/dsh-session";
+import llmPackage from "@deepseek-ai/dsh-llm/package.json" with { type: "json" };
 import { agentRuntime } from "./helpers/agent-runtime.js";
 import * as plugin from "../lib/index.js";
 import { isBreadcrumbMessage } from "../lib/breadcrumb.js";
@@ -17,6 +18,9 @@ const updates = (session) => session.snapshotEvents()
   .flatMap((event) => event.data.message.content);
 const crumbs = (session) => session.deriveMessages().filter(isBreadcrumbMessage);
 const toolNames = (request) => (request.tools ?? []).map((tool) => tool.name);
+// RC.2 rebuilds addition-only declarations on removals and empty -> nonempty
+// transitions. Keep the older host's exact wire contract independently checked.
+const rebasesEmptyAddition = llmPackage.version === "0.2.2-rc.2";
 
 // Only the provider response is scripted: request construction, tool updates,
 // pre-step delivery, Loader config and session projections use the real host.
@@ -83,10 +87,13 @@ for (const toolUpdate of [undefined, "addition-only", "in-history"]) {
     assert.deepEqual(updates(agent.session), [addition]);
     assert.deepEqual(toolNames(enabled), ["trellis_wait"]);
     assert.equal(crumbs(agent.session).length, 1);
-    if (toolUpdate !== undefined) {
+    if (toolUpdate === "in-history" || (toolUpdate === "addition-only" && !rebasesEmptyAddition)) {
       assert.equal(enabled.tools[0].deferLoading, true);
       assert.deepEqual(enabled.messages.filter((message) => message.role === "developer")
         .flatMap((message) => message.content), [addition]);
+    } else {
+      assert.equal(enabled.tools.some((tool) => tool.deferLoading), false);
+      assert.equal(enabled.messages.some((message) => message.role === "developer"), false);
     }
 
     // Remount the runtime without changing the tool set or breadcrumb payload.
@@ -119,7 +126,7 @@ for (const toolUpdate of [undefined, "addition-only", "in-history"]) {
     const developerContent = reenabled.messages.filter((message) => message.role === "developer")
       .flatMap((message) => message.content);
     assert.deepEqual(developerContent, toolUpdate === "in-history"
-      ? [addition, removal, addition] : toolUpdate === "addition-only" ? [addition] : []);
+      ? [addition, removal, addition] : toolUpdate === "addition-only" && !rebasesEmptyAddition ? [addition] : []);
 
     // Replay and fork the mixed user/developer history through host projections.
     const restored = ctx.sessions.create("restored-tools", {

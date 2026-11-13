@@ -38,13 +38,13 @@ export async function modelServer(mode, rootId) {
           if (res.destroyed) return;
           action = { name: "skill", arguments: { name: `trellis-agent-${child}` } };
         } else if (stage === 1) action = command(child);
-        else if (stage === 2) action = { name: "send_message", arguments: { agent_id: rootId, message: `${child.toUpperCase()}_REPORT_OK` } };
+        else if (stage === 2) action = { name: "send_message", arguments: { agent: "lead", message: `${child.toUpperCase()}_REPORT_OK` } };
       } else if (["bootstrap", "finish"].includes(root) && stage === 0) action = command(root);
       else if (["research", "implement", "check", "cancel"].includes(root)) {
-        if (stage === 0) action = { name: "subagent", arguments: { description: `E2E ${root} role`, prompt: `Active task: ${taskPath}\nE2E_CHILD:${root}\nLoad only trellis-agent-${root}; carry out the assigned role and report to your parent.` } };
+        if (stage === 0) action = { name: "subagent", arguments: { name: root, description: `E2E ${root} role`, prompt: `Active task: ${taskPath}\nE2E_CHILD:${root}\nLoad only trellis-agent-${root}; carry out the assigned role and report to your parent.` } };
         if (stage === 1) {
-          const childId = await deferred(childIds, root).promise;
-          action = { name: "trellis_wait", arguments: { subagent_id: childId } };
+          await deferred(childIds, root).promise;
+          action = { name: "trellis_wait", arguments: { subagent_id: root } };
         }
       } else if (root === "invalid" && stage === 0) action = { name: "trellis_wait", arguments: { subagent_id: "not-a-direct-child" } };
       const names = input.tools?.map(tool => tool.function.name) ?? [];
@@ -81,10 +81,9 @@ export async function modelServer(mode, rootId) {
       }
       const event = message.method === "session.event" && message.params.event;
       if (["tool/call", "tool/ptc-dispatch-start"].includes(event?.type) && event.data.name === "trellis_wait") {
-        const role = [...children].find(([, id]) => id === event.data.arguments?.subagent_id)?.[0];
         // Native tool/call stores JSON arguments; PTC stores the parsed value.
         const args = typeof event.data.arguments === "string" ? JSON.parse(event.data.arguments) : event.data.arguments;
-        const actualRole = role ?? [...children].find(([, id]) => id === args?.subagent_id)?.[0];
+        const actualRole = [...children].find(([role, id]) => role === args?.subagent_id || id === args?.subagent_id)?.[0];
         if (actualRole === "cancel") waitStarted.resolve();
         else if (actualRole) deferred(gates, actualRole).resolve();
       }

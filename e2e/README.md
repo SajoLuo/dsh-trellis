@@ -1,6 +1,6 @@
 # DSH × Trellis E2E
 
-固定 DSH `0.2.2-rc.1`、Trellis CLI `0.7.0-beta.4` 和完整依赖锁文件。显式固定官方 app-boot 所需的 Group `1.1.0` peer，避免沿用旧锁文件的 alpha peer。每次运行创建新的临时 Git 项目、`DSH_HOME`、SDK profile、会话和日志目录。默认测试当前源码打包产物；`--published` 安装 npm 上与根 `package.json` 相同版本的正式包。不会切换或清理开发仓库，不使用个人 DSH 配置或凭据，不推送验收项目。
+固定 DSH `0.2.2-rc.2`、Trellis CLI `0.7.0-beta.4` 和完整依赖锁文件。显式固定官方 app-boot 所需的 Group `1.1.0` peer，避免沿用旧锁文件的 alpha peer。每次运行创建新的临时 Git 项目、`DSH_HOME`、SDK profile、会话和日志目录。默认测试当前源码打包产物；`--published` 安装 npm 上与根 `package.json` 相同版本的正式包。不会切换或清理开发仓库，不使用个人 DSH 配置或凭据，不推送验收项目。
 
 ## 本机运行
 
@@ -44,7 +44,7 @@ Native 和 PTC 各验证：
 1. `trellis init --dsh` 初始化新项目；正常安装 tarball / npm 包，完整 SDK initialize。
 2. 通过真实 Shell 建档、填写 PRD、整理 implement/check context、验证并绑定任务。即使继承外层 Codex/Trellis 身份，也只写自己的 `dsh_<session-id>` 指针。
 3. 无任务与绑定状态各注入一次；稳定状态去重；另一个 SDK session 不借用已有任务。
-4. research → implement → check 三个直属 continuable 子代理各只加载自己的角色技能；执行命令并向父代理报告，分别通过真实 `trellis_wait` 汇合。
+4. research → implement → check 三个具名直属 continuable 子代理各只加载自己的角色技能；核对实际启动名称，以 `send_message({ agent: "lead" })` 报告，再按名称通过真实 `trellis_wait` 汇合，结果必须含实际 Session id。Shell 角色回执也必须匹配自身 `dsh_<session-id>`，不能把名称作为会话身份。
 5. 检查角色命令的成功标志和真实测试结果，不能把 Agent 的 `completed` 或 Shell 的 `isError=false` 当作业务测试通过。
 6. 关闭并重启 SDK 进程，恢复相同原生会话，投影重放后不重复注入。
 7. 非直属 child 的 wait 必须被拒绝；归档任务、写 journal，Git 工作区干净，父会话恢复 `no_task`。
@@ -58,4 +58,4 @@ PTC 只向模型公开 `run_code`，通过实际 `tools.*` 绑定执行上述操
 
 这是一套可重复的完整软件链路测试，模型决策由本地脚本提供，不消耗 API 额度，也不证明真实大模型能自主遵循工作流。真实模型验收需要单独确认其配置与请求预算。Web UI 的表单和启停另由插件单元测试及隔离浏览器验收覆盖；这里不自动化桌面 GUI、跨版本 HMR 或 SSH 工作区。
 
-RC.1 的 Windows 通过项、默认沙箱失败和原始证据位置见 [RC.1 验证记录](../docs/validation-dsh-0.2.2-rc.1.md)。本轮 Linux 尚未执行；此前 alpha.2 的 Linux/Windows 结果保留在 [2026-10-28 历史记录](../docs/validation-e2e-2026-10-28.md)，不能当作 RC.1 的验证结果。
+RC.2 的 Windows 非沙箱对照通过项、默认沙箱失败和原始证据位置见 [RC.2 验证记录](../docs/validation-dsh-0.2.2-rc.2.md)。本轮 Linux E2E 尚未执行；RC.1 与 alpha.2 的历史材料分别见 [RC.1 记录](../docs/validation-dsh-0.2.2-rc.1.md)和 [2026-10-28 记录](../docs/validation-e2e-2026-10-28.md)，不能当作 RC.2 的验证结果。

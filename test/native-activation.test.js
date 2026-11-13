@@ -44,10 +44,11 @@ for (const outcome of ["completed", "aborted", "failed"]) {
       assert.equal(request.cwd, tmpdir());
       return {};
     } });
+    const request = { parent, prompt: [{ type: "text", text: "report" }], maxDepth: 1 };
     const activation = await ctx.subagents.startActivation({
       provider: "local-test", label: "Trellis role", delivery: "caller",
       signal: new AbortController().signal,
-      request: { parent, prompt: [{ type: "text", text: "report" }], maxDepth: 1 },
+      ...(typeof ctx.subagents.listChildren === "function" ? { request } : request),
     });
     t.after(() => activation.dispose());
     await adapter.entered.promise;
@@ -70,3 +71,42 @@ for (const outcome of ["completed", "aborted", "failed"]) {
     assert.equal(parent.inbox.nextStep.length, 0, "caller delivery queues no parent completion notice");
   });
 }
+
+test("real named nested activation settles through the root's scoped lifecycle", {
+  skip: typeof SubagentRuntime.prototype.resolveName !== "function", timeout: 10_000,
+}, async (t) => {
+  const ctx = await agentRuntime(t);
+  await ctx.plugin(SubagentRuntime).await();
+  await ctx.plugin(SessionQueryEngine).await();
+  const reviewerModel = new GatedAdapter();
+  const checkerModel = new GatedAdapter();
+  ctx.llm.registerAdapter(["reviewer-model"], reviewerModel);
+  ctx.llm.registerAdapter(["checker-model"], checkerModel);
+  const root = await ctx.agentLoop.create("nested-root", { provider: "reviewer-model", model: "local" }, { cwd: tmpdir() });
+  ctx.subagents.registerProvider({ name: "nested-test", inheritsParentContext: false,
+    capabilities: { depthLimit: true, agentOptions: true }, async prepareContinuable() { return {}; } });
+  const common = { provider: "nested-test", delivery: "caller", signal: new AbortController().signal, maxDepth: 2 };
+  const review = await ctx.subagents.startActivation({ ...common, name: "reviewer", label: "review",
+    parent: root, prompt: [{ type: "text", text: "review" }] });
+  t.after(() => review.dispose());
+  await reviewerModel.entered.promise;
+  const reviewer = ctx.agents.get(review.childId);
+  const check = await ctx.subagents.startActivation({ ...common, name: "checker", label: "check",
+    parent: reviewer, prompt: [{ type: "text", text: "check" }],
+    agentOptions: { provider: "checker-model", model: "local" } });
+  t.after(() => check.dispose());
+  await checkerModel.entered.promise;
+  assert.equal(check.name, "reviewer/checker");
+  let tool;
+  const register = ctx.tools.register.bind(ctx.tools);
+  t.after(registerWaitTool({ tools: { register(value) { tool = value; return register(value); } },
+    subagents: ctx.subagents, get: ctx.get.bind(ctx) }));
+  await assert.rejects(tool.execute({ subagent_id: "lead" }, { agent: reviewer }), /direct continuable/);
+  const pending = tool.execute({ subagent_id: check.name }, { agent: reviewer });
+  checkerModel.release.resolve();
+  const result = await pending;
+  assert.equal(result.outcome, "completed");
+  assert.equal(result.subagentId, check.childId);
+  assert.equal(result.stopReason, (await check.result).stopReason);
+  assert.equal(result.settlementNoticeQueued, false);
+});

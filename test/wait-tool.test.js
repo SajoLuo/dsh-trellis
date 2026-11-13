@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import { SubagentRuntime } from "@deepseek-ai/dsh-subagent";
 import { registerWaitTool, settlementOutcome } from "../lib/wait-tool.js";
 
-test("installed DSH runtime retains direct-child lookup", () => {
-  assert.equal(typeof SubagentRuntime.prototype.listChildren, "function");
+test("installed DSH runtime exposes a supported catalog/name capability", () => {
+  const api = SubagentRuntime.prototype;
+  if (typeof api.listChildren !== "function") {
+    assert.equal(typeof api.rootOf, "function");
+    assert.equal(typeof api.resolveName, "function");
+  }
+  assert.equal(typeof api.listDescendants, "function");
 });
 
 function harness(entries) {

@@ -121,7 +121,9 @@ for (const mode of ["native", "ptc"]) {
     const actionResult = (action, sessionId) => {
       const results = events.filter(row => row.sessionId === sessionId && ["tool/result", "tool/ptc-dispatch"].includes(row.event.type));
       const text = results.map(row => (row.event.data.message?.content ?? row.event.data.content ?? []).filter(block => block.type === "text").map(block => block.text).join("\n")).join("\n");
-      assert.match(text, new RegExp(`(?:^|\\r?\\n)${action.toUpperCase()}_OK dsh_`), `${action} command did not succeed:\n${text.slice(-4000)}`);
+      const context = `dsh_${sessionId}`;
+      assert.ok(text.split(/\r?\n/).some(line => line === `${action.toUpperCase()}_OK ${context}`),
+        `${action} command did not succeed with its native Session identity:\n${text.slice(-4000)}`);
     };
     const connect = async () => {
       client = sdk(project, env, observe);
@@ -159,12 +161,22 @@ for (const mode of ["native", "ptc"]) {
       assert.deepEqual(calls.map(call => call.name), ["skill", process.platform === "win32" ? "pwsh" : "bash", "send_message"]);
       const skillArgs = typeof calls[0].arguments === "string" ? JSON.parse(calls[0].arguments) : calls[0].arguments;
       assert.equal(skillArgs.name, `trellis-agent-${role}`);
+      const reportArgs = typeof calls[2].arguments === "string" ? JSON.parse(calls[2].arguments) : calls[2].arguments;
+      assert.equal(reportArgs.agent, "lead", "RC.2 reports address the root by its native name");
+      assert.ok(events.some(row => row.sessionId === rootId && ["tool/result", "tool/ptc-dispatch"].includes(row.event.type)
+        && row.event.data.meta?.kind === "activation" && row.event.data.meta.name === role
+        && (row.event.data.message?.content ?? row.event.data.content ?? []).some(block =>
+          block.type === "text" && block.text === `started subagent ${role}`)), "the host must return the requested name");
       assert.ok(events.filter(row => row.sessionId === childId && ["tool/result", "tool/ptc-dispatch"].includes(row.event.type)).every(row => !(row.event.data.isError || row.event.data.message?.isError)), "role skills and reports must actually succeed");
     }
     const waitIds = new Set(events.filter(row => row.sessionId === rootId && row.event.type === "tool/call" && row.event.data.name === "trellis_wait").map(row => row.event.data.callId));
     const waits = events.filter(row => row.sessionId === rootId && (row.event.type === "tool/ptc-dispatch" && row.event.data.name === "trellis_wait" || row.event.type === "tool/result" && waitIds.has(row.event.data.message.toolCallId)));
     assert.equal(waits.length, 3, "each role needs its own wait result");
     assert.ok(waits.every(row => /completed; settlement notice delivery is unverified/.test(JSON.stringify(row.event.data))), JSON.stringify(waits));
+    for (const role of ["research", "implement", "check"]) {
+      assert.ok(waits.some(row => JSON.stringify(row.event.data).includes(`subagent ${model.children.get(role)} completed`)),
+        "named waits must resolve to the real child Session id");
+    }
     run(process.execPath, ["--test"], project, env);
     await client.close();
     await writeFile(join(directory, "first-sdk-stderr.log"), client.logs());
