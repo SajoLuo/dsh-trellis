@@ -2,20 +2,33 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 
 /** Script only the model's decisions; the HTTP adapter, host and tools are real. */
-export async function modelServer(mode, rootId) {
+export async function modelServer(mode, rootId, pythonCmd = process.platform === "win32" ? "python" : "python3") {
   const requests = [];
   const stages = new Map();
   const children = new Map();
   const childIds = new Map();
   const gates = new Map();
+  const pendingRoles = [];
   const waitStarted = Promise.withResolvers();
+  waitStarted.promise.catch(() => {});
+  let waitSettled = false;
+  const settleWaitStarted = (error) => {
+    if (waitSettled) return;
+    waitSettled = true;
+    if (error) waitStarted.reject(error);
+    else waitStarted.resolve();
+  };
   let taskPath;
   const deferred = (map, key) => {
     if (!map.has(key)) map.set(key, Promise.withResolvers());
     return map.get(key);
   };
   const shell = process.platform === "win32" ? "pwsh" : "bash";
-  const command = (action) => ({ name: shell, arguments: { command: `python${process.platform === "win32" ? "" : "3"} -X utf8 e2e-fixture.py ${action}`, description: `Run E2E ${action} action` } });
+  const command = (action) => ({ name: shell, arguments: { command: `${pythonCmd} -X utf8 e2e-fixture.py ${action}`, description: `Run E2E ${action} action` } });
+  const promptText = (messages) => (messages ?? [])
+    .filter(message => message.role === "system" || message.role === "user")
+    .map(message => typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? ""))
+    .join("\n");
   const server = createServer(async (req, res) => {
     try {
       assert.equal(req.url, "/v1/chat/completions");
@@ -24,9 +37,13 @@ export async function modelServer(mode, rootId) {
       const input = JSON.parse(body);
       requests.push(input);
       assert.ok(requests.length <= 100, "unexpected model loop");
-      const text = JSON.stringify(input.messages);
+      const text = promptText(input.messages);
       const root = [...text.matchAll(/E2E_ROOT:(\w+)/g)].at(-1)?.[1];
-      const child = root ? undefined : [...text.matchAll(/E2E_CHILD:(\w+)/g)].at(-1)?.[1];
+      const child = root ? undefined : (
+        [...text.matchAll(/E2E_CHILD:(\w+)/g)].at(-1)?.[1]
+        ?? [...text.matchAll(/trellis-agent-(research|implement|check|cancel)\b/g)].at(-1)?.[1]
+      );
+      assert.ok(root || child, "cannot classify model request as root or child role");
       const key = root ? `root:${root}` : `child:${child}`;
       const stage = stages.get(key) ?? 0;
       stages.set(key, stage + 1);
@@ -41,7 +58,10 @@ export async function modelServer(mode, rootId) {
         else if (stage === 2) action = { name: "send_message", arguments: { agent: "lead", message: `${child.toUpperCase()}_REPORT_OK` } };
       } else if (["bootstrap", "finish"].includes(root) && stage === 0) action = command(root);
       else if (["research", "implement", "check", "cancel"].includes(root)) {
-        if (stage === 0) action = { name: "subagent", arguments: { name: root, description: `E2E ${root} role`, prompt: `Active task: ${taskPath}\nE2E_CHILD:${root}\nLoad only trellis-agent-${root}; carry out the assigned role and report to your parent.` } };
+        if (stage === 0) {
+          pendingRoles.push(root);
+          action = { name: "subagent", arguments: { name: root, description: `E2E ${root} role`, prompt: `Active task: ${taskPath}\nE2E_CHILD:${root}\nLoad only trellis-agent-${root}; carry out the assigned role and report to your parent.` } };
+        }
         if (stage === 1) {
           await deferred(childIds, root).promise;
           action = { name: "trellis_wait", arguments: { subagent_id: root } };
@@ -63,8 +83,13 @@ export async function modelServer(mode, rootId) {
       emit({}, action ? "tool_calls" : "stop");
       res.end("data: [DONE]\n\n");
     } catch (error) {
-      res.writeHead(500, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: { message: error.message } }));
+      if (!res.headersSent) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: error.message } }));
+      } else {
+        res.destroy(error);
+      }
+      settleWaitStarted(error);
     }
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -75,7 +100,10 @@ export async function modelServer(mode, rootId) {
     observe(message) {
       if (message.method === "subagent.started") {
         assert.equal(message.params.parentSessionId, rootId, "roles cannot delegate recursively");
-        const role = [...stages.keys()].filter(key => key.startsWith("root:")).at(-1).slice(5);
+        const role = (typeof message.params.name === "string" && ["research", "implement", "check", "cancel"].includes(message.params.name)
+          ? message.params.name
+          : undefined) ?? pendingRoles.shift();
+        assert.ok(role, "subagent.started received without matching pending role");
         children.set(role, message.params.childSessionId);
         deferred(childIds, role).resolve(message.params.childSessionId);
       }
@@ -84,7 +112,7 @@ export async function modelServer(mode, rootId) {
         // Native tool/call stores JSON arguments; PTC stores the parsed value.
         const args = typeof event.data.arguments === "string" ? JSON.parse(event.data.arguments) : event.data.arguments;
         const actualRole = [...children].find(([role, id]) => role === args?.subagent_id || id === args?.subagent_id)?.[0];
-        if (actualRole === "cancel") waitStarted.resolve();
+        if (actualRole === "cancel") settleWaitStarted();
         else if (actualRole) deferred(gates, actualRole).resolve();
       }
     },

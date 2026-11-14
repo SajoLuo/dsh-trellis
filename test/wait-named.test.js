@@ -146,3 +146,66 @@ for (const phase of ["resolve", "catalog"]) {
     assert.equal(h.disposed(), phase === "resolve" ? 0 : 1);
   });
 }
+
+test("root session rejects lead and slash paths without leaking resources", async (t) => {
+  const handlers = new Set();
+  const root = {
+    id: "root-id",
+    ctx: {
+      on(event, fn) {
+        assert.equal(event, "subagent/end");
+        handlers.add(fn);
+        return () => handlers.delete(fn);
+      },
+    },
+  };
+  let tool;
+  let disposals = 0;
+  const dispose = registerWaitTool({
+    tools: { register(value) { tool = value; return () => {}; } },
+    subagents: {
+      rootOf(agent) { assert.equal(agent, root); return root; },
+      async resolveName(caller, name) {
+        assert.equal(caller, root);
+        if (name === "lead") return root.id;
+        if (name === "a/b") return "grandchild-id";
+        if (name.includes("/")) throw new Error(`agent name ${JSON.stringify(name)} was not found`);
+        return name;
+      },
+    },
+    get(name) {
+      assert.equal(name, "sessionQuery");
+      return {
+        async observeSession(id) {
+          assert.equal(id, root.id);
+          return {
+            projections: { values: { subagentCatalog: [row] } },
+            [Symbol.dispose]() { disposals++; },
+          };
+        },
+      };
+    },
+  });
+  t.after(dispose);
+
+  await assert.rejects(
+    tool.execute({ subagent_id: "lead" }, { agent: root }),
+    /direct continuable subagent/,
+  );
+  assert.equal(disposals, 1);
+  assert.equal(handlers.size, 0);
+
+  await assert.rejects(
+    tool.execute({ subagent_id: "a/b" }, { agent: root }),
+    /direct continuable subagent/,
+  );
+  assert.equal(disposals, 2);
+  assert.equal(handlers.size, 0);
+
+  await assert.rejects(
+    tool.execute({ subagent_id: "missing/child" }, { agent: root }),
+    /was not found/,
+  );
+  assert.equal(disposals, 2);
+  assert.equal(handlers.size, 0);
+});

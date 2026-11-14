@@ -106,3 +106,17 @@ test("a settlement during a failed catalog lookup cannot turn the failure into s
   await rejected;
   assert.equal(h.listeners.size, 0);
 });
+
+test("catalog teardown window settles delayed subagent/end after store detachment", async (t) => {
+  let h;
+  h = fixture(t, {
+    entries: async () => {
+      setImmediate(() => h.end("completed"));
+      return [row];
+    },
+  });
+  const result = await h.run();
+  assert.equal(result.state, "settled");
+  assert.equal(result.outcome, "completed");
+  assert.equal(h.listeners.size, 0);
+});

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { join, resolve, sep } from "node:path";
 import {
   parseWorkflowStateBlocks,
+  readCached,
   resolveTrellisState,
   sanitizeContextKey,
   mapStatus,
@@ -93,14 +94,21 @@ test("sanitizeContextKey matches Trellis task.py sanitization", () => {
   );
   assert.equal(sanitizeContextKey("a b!c"), "a_b_c");
   assert.equal(sanitizeContextKey("..__x.."), "x");
+  assert.equal(sanitizeContextKey(`  ${"a".repeat(200)}  `).length, 160);
+  assert.equal(sanitizeContextKey(`${"a".repeat(159)}_bbb`), "a".repeat(159));
 });
 
-test("mapStatus preserves task errors and known workflow states", () => {
+test("mapStatus preserves valid status slugs, whitespace/null as no_task, and invalid values as task_error", () => {
   assert.equal(mapStatus("planning"), "planning");
   assert.equal(mapStatus("in_progress"), "in_progress");
   assert.equal(mapStatus("task_error"), "task_error");
-  assert.equal(mapStatus("completed"), "no_task");
+  assert.equal(mapStatus("completed"), "completed");
+  assert.equal(mapStatus("  in-review  "), "in-review");
   assert.equal(mapStatus(null), "no_task");
+  assert.equal(mapStatus(undefined), "no_task");
+  assert.equal(mapStatus("   "), "no_task");
+  assert.equal(mapStatus("bad status"), "task_error");
+  assert.equal(mapStatus(123), "task_error");
 });
 
 test("resolveTrellisState: no trellis project → null", async () => {
@@ -400,4 +408,92 @@ test("resolveTrellisState: exact binding does not require listing session files"
   const state = await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache: new Map() });
   assert.equal(state.status, "planning");
   assert.equal(state.taskPath, ".trellis/tasks/own");
+});
+
+test("resolveTrellisState supports custom [workflow-state:*] blocks and fallback for unmatched custom statuses", async () => {
+  const fs = memoryFs({
+    [proj(".git")]: "",
+    [proj(".trellis/workflow.md")]:
+      `${WORKFLOW_MD}[workflow-state:in-review]\nInspect review feedback.\n[/workflow-state:in-review]\n`,
+    [proj(".trellis/.runtime/sessions/dsh_me.json")]: '{"current_task":".trellis/tasks/own"}',
+    [proj(".trellis/tasks/own/task.json")]: '{"status":"in-review"}',
+  });
+  const reviewState = await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache: new Map() });
+  assert.equal(reviewState.status, "in-review");
+  assert.equal(reviewState.body, "Inspect review feedback.");
+
+  fs.files.set(proj(".trellis/tasks/own/task.json"), '{"status":"completed"}');
+  const completedState = await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache: new Map() });
+  assert.equal(completedState.status, "completed");
+  assert.equal(completedState.body, FALLBACK_BREADCRUMB);
+});
+
+test("resolveTrellisState applies 4-tier workflow selection and caches parsed blocks per mtime", async () => {
+  const baseFiles = {
+    [proj(".git")]: "",
+    [proj(".trellis/workflow.md")]: "[workflow-state:planning]\nDefault workflow.\n[/workflow-state:planning]",
+    [proj(".trellis/workflows/team.md")]: "[workflow-state:planning]\nTeam workflow.\n[/workflow-state:planning]",
+    [proj(".trellis/workflows/personal.md")]: "[workflow-state:planning]\nPersonal workflow.\n[/workflow-state:planning]",
+    [proj(".trellis/workflows/task-specific.md")]: "[workflow-state:planning]\nTask workflow.\n[/workflow-state:planning]",
+    [proj(".trellis/config.yaml")]: 'nested:\n  default_workflow: ignored\ndefault_workflow: "team" # team default\n',
+    [proj(".trellis/.runtime/sessions/dsh_me.json")]: '{"current_task":".trellis/tasks/own"}',
+    [proj(".trellis/tasks/own/task.json")]: '{"status":"planning"}',
+  };
+  const fs = memoryFs(baseFiles);
+  const cache = new Map();
+
+  // Tier 3: config.yaml top-level scalar
+  assert.equal(
+    (await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache })).body,
+    "Team workflow.",
+  );
+
+  // Tier 2: .trellis/.developer overrides config.yaml
+  fs.files.set(proj(".trellis/.developer"), "# comment\nworkflow=personal # override\n");
+  assert.equal(
+    (await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache })).body,
+    "Personal workflow.",
+  );
+
+  // Tier 1: taskData.workflow overrides .developer
+  fs.files.set(proj(".trellis/tasks/own/task.json"), '{"status":"planning","workflow":"task-specific"}');
+  const origReadFile = fs.readFile;
+  let workflowReads = 0;
+  fs.readFile = async (path) => {
+    if (path.endsWith("task-specific.md")) workflowReads++;
+    return origReadFile(path);
+  };
+  const firstTaskHit = await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache });
+  const secondTaskHit = await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache });
+  assert.equal(firstTaskHit.body, "Task workflow.");
+  assert.equal(secondTaskHit.body, "Task workflow.");
+  assert.equal(workflowReads, 1);
+
+  // Explicit "default", missing workflow file, or invalid slug falls back to .trellis/workflow.md
+  for (const fallbackId of ["default", "missing", "../escape"]) {
+    fs.files.set(proj(".trellis/tasks/own/task.json"), JSON.stringify({ status: "planning", workflow: fallbackId }));
+    assert.equal(
+      (await resolveTrellisState({ cwd: projectRoot, markers: [".git"], contextKey: "dsh_me", fs, cache })).body,
+      "Default workflow.",
+    );
+  }
+});
+
+test("readCached deletes removed paths and caps cache size at 64 FIFO entries", async () => {
+  const fs = memoryFs({ [proj("gone.txt")]: "old" });
+  const cache = new Map();
+  assert.equal(await readCached(proj("gone.txt"), fs, cache), "old");
+  assert.equal(cache.has(proj("gone.txt")), true);
+  fs.files.delete(proj("gone.txt"));
+  assert.equal(await readCached(proj("gone.txt"), fs, cache), null);
+  assert.equal(cache.has(proj("gone.txt")), false);
+
+  for (let i = 0; i < 70; i++) {
+    const file = proj(`f-${i}.txt`);
+    fs.files.set(file, `val-${i}`);
+    assert.equal(await readCached(file, fs, cache), `val-${i}`);
+  }
+  assert.equal(cache.size, 64);
+  assert.equal(cache.has(proj("f-0.txt")), false);
+  assert.equal(cache.has(proj("f-69.txt")), true);
 });

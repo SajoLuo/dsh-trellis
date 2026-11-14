@@ -16,6 +16,9 @@ function record(value) {
 }
 
 export function sameValue(left, right) {
+  if (Number.isNaN(left) || Number.isNaN(right)) {
+    return Object.is(left, right);
+  }
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
@@ -50,20 +53,29 @@ export function parseMarkers(text) {
 }
 
 export function parseDraft(draft) {
-  const maxBytes = Number(String(draft.maxBytes.value).trim());
+  const maxBytesText = String(draft.maxBytes.value).trim();
+  const parsedMaxBytes = /^\d+$/.test(maxBytesText)
+    ? Number(maxBytesText)
+    : Number.NaN;
+  const validMaxBytes =
+    Number.isSafeInteger(parsedMaxBytes) && parsedMaxBytes >= 0;
+  const maxBytes = validMaxBytes ? parsedMaxBytes : Number.NaN;
+  const markersValue = draft.projectRootMarkers.value;
   return {
     invalid:
-      !Number.isInteger(maxBytes) ||
-      maxBytes < 0 ||
+      !validMaxBytes ||
       typeof draft.enabled.value !== "boolean" ||
       typeof draft.commandsEnabled.value !== "boolean",
     value: {
       enabled: draft.enabled.value,
       maxBytes,
-      projectRootMarkers: parseMarkers(Array.isArray(draft.projectRootMarkers.value)
-        ? draft.projectRootMarkers.value.join("\n") : String(draft.projectRootMarkers.value)),
-      skipKeyword: String(draft.skipKeyword.value),
-      pythonCmd: String(draft.pythonCmd.value),
+      projectRootMarkers: parseMarkers(
+        Array.isArray(markersValue)
+          ? markersValue.join("\n")
+          : String(markersValue),
+      ),
+      skipKeyword: String(draft.skipKeyword.value).trim(),
+      pythonCmd: String(draft.pythonCmd.value).trim(),
       commandsEnabled: draft.commandsEnabled.value,
     },
   };

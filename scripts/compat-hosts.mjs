@@ -39,8 +39,10 @@ export function createCompatManifest(original, version) {
   }
   const manifest = structuredClone(original);
   manifest.private = true;
-  delete manifest.scripts.prepack;
+  if (manifest.scripts) delete manifest.scripts.prepack;
+  manifest.devDependencies ??= {};
   delete manifest.devDependencies["@deepseek-ai/dsh-invariants"];
+  delete manifest.devDependencies.tsdown;
   for (const name of Object.keys(manifest.devDependencies)) {
     if (name.startsWith("@deepseek-ai/dsh-")) manifest.devDependencies[name] = version;
   }

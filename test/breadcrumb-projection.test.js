@@ -282,3 +282,123 @@ test("a native Promise with an invalid handle fails before any registry read", a
   await assert.rejects(projection.ready, /invalid projection handle/);
   projection.dispose();
 });
+
+test("stateSchema validates plain objects, integer keys, sha256 values, and rejects symbols/classes/zod", async () => {
+  const digest = "a".repeat(64);
+  const nullProto = Object.assign(Object.create(null), { 0: digest, 12: digest });
+  const parsed = breadcrumbProjection.stateSchema.parse(nullProto);
+  assert.deepEqual(parsed, { 0: digest, 12: digest });
+  assert.equal(Object.getPrototypeOf(parsed), Object.prototype);
+  assert.notEqual(parsed, nullProto);
+
+  for (const bad of [
+    null,
+    undefined,
+    [],
+    "string",
+    new Date(),
+    new Map(),
+    { [Symbol("extra")]: digest },
+    { "01": digest },
+    { "-1": digest },
+    { foo: digest },
+    JSON.parse(`{"__proto__":"${digest}"}`),
+    { 0: "A".repeat(64) },
+    { 0: "a".repeat(63) },
+    { 0: 123 },
+  ]) {
+    assert.throws(() => breadcrumbProjection.stateSchema.parse(bad), TypeError);
+  }
+
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const libDir = new URL("../lib/", import.meta.url);
+  for (const file of await readdir(libDir)) {
+    if (!file.endsWith(".js")) continue;
+    const source = await readFile(new URL(file, libDir), "utf8");
+    assert.doesNotMatch(source, /from\s+["']zod["']/, file);
+  }
+  assert.ok(pkg.name === "dsh-trellis");
+});
+
+test("pending async projection dispose propagates handle.dispose errors and ignores cancellation failures", async () => {
+  const boom = Promise.withResolvers();
+  let disposals = 0;
+  const projection = registerBreadcrumbProjection({
+    sessionProjections: { register: () => boom.promise },
+  });
+  const disposing = projection.dispose();
+  boom.resolve({
+    stateOf: () => ({}),
+    async dispose() {
+      disposals++;
+      throw new Error("handle dispose failed");
+    },
+  });
+  await assert.rejects(disposing, /handle dispose failed/);
+  await projection.ready;
+  assert.equal(disposals, 1);
+
+  const canceled = Promise.withResolvers();
+  const canceledProjection = registerBreadcrumbProjection({
+    sessionProjections: { register: () => canceled.promise },
+  });
+  const canceledDispose = canceledProjection.dispose();
+  canceled.reject(new Error("registration canceled"));
+  assert.equal(await canceledDispose, undefined);
+  await canceledProjection.ready;
+});
+
+test("beforeRegister serializes projection acquisition and cancels cleanly if disposed early", async () => {
+  const gate = Promise.withResolvers();
+  let calls = 0;
+  let disposals = 0;
+  const session = { surface: { nodes: [5] } };
+  const projection = registerBreadcrumbProjection(
+    {
+      sessionProjections: {
+        register: () => {
+          calls++;
+          return Promise.resolve({
+            stateOf: () => ({ 5: breadcrumbFingerprint(crumb()) }),
+            async dispose() { disposals++; },
+          });
+        },
+      },
+    },
+    { beforeRegister: gate.promise },
+  );
+  assert.equal(calls, 0);
+  assert.throws(() => projection.isVisible(session, crumb()), /not ready/);
+  gate.resolve();
+  await projection.ready;
+  assert.equal(calls, 1);
+  assert.equal(projection.isVisible(session, crumb()), true);
+  await projection.dispose();
+  assert.equal(disposals, 1);
+
+  const abortedGate = Promise.withResolvers();
+  let canceledCalls = 0;
+  const canceled = registerBreadcrumbProjection(
+    {
+      sessionProjections: {
+        register: () => {
+          canceledCalls++;
+          return () => {};
+        },
+      },
+    },
+    { beforeRegister: abortedGate.promise },
+  );
+  assert.equal(canceled.dispose(), undefined);
+  abortedGate.resolve();
+  await canceled.ready;
+  assert.equal(canceledCalls, 0);
+
+  const failedGate = Promise.reject(new Error("prior teardown boom"));
+  const failed = registerBreadcrumbProjection(
+    { sessionProjections: { register: () => assert.fail("must not register after failed gate") } },
+    { beforeRegister: failedGate },
+  );
+  await assert.rejects(failed.ready, /prior teardown boom/);
+  assert.throws(() => failed.isVisible(session, crumb()), /prior teardown boom/);
+});

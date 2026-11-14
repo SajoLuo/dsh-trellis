@@ -13,8 +13,23 @@ const trellis = fileURLToPath(new URL("./node_modules/@mindfoldhq/trellis/bin/tr
 const output = await mkdtemp(join(tmpdir(), "dsh-trellis-e2e-"));
 console.log(`E2E artifacts: ${output}`);
 const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-  /^(?:PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|PROGRAMFILES(?:\(X86\))?|PROGRAMDATA|PROCESSOR_ARCHITECTURE)$/i.test(key)));
+  /^(?:PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|TMPDIR|LANG|LC_ALL|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|HTTP_PROXY|HTTPS_PROXY|NO_PROXY|PROGRAMFILES(?:\(X86\))?|PROGRAMDATA|PROCESSOR_ARCHITECTURE)$/i.test(key)));
 const run = (cmd, args, cwd, env) => execFileSync(cmd, args, { cwd, env, windowsHide: true, encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
+const resolvePython = () => {
+  const candidates = process.platform === "win32"
+    ? [["python", []], ["py", ["-3"]], ["python3", []]]
+    : [["python3", []], ["python", []]];
+  for (const [cmd, prefix] of candidates) {
+    try {
+      execFileSync(cmd, [...prefix, "-c", "import sys; assert sys.version_info >= (3, 10)"], {
+        env: baseEnv, windowsHide: true, stdio: "ignore", timeout: 10_000,
+      });
+      return prefix.length ? `${cmd} ${prefix.join(" ")}` : cmd;
+    } catch {}
+  }
+  throw new Error("Python 3 (>= 3.10) is required for E2E");
+};
+const pythonCmd = resolvePython();
 const pnpm = process.env.npm_execpath;
 assert.ok(pnpm && process.env.npm_config_user_agent?.startsWith("pnpm/"), "Run pnpm run test:e2e");
 const manifest = JSON.parse(await readFile(join(root, "package.json")));
@@ -71,7 +86,17 @@ function sdk(cwd, env, observe) {
     },
     async close() {
       await this.call("shutdown");
-      assert.equal(await exited.promise, 0);
+      let timer;
+      const code = await Promise.race([
+        exited.promise,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            child.kill();
+            reject(new Error(`SDK exit deadline after shutdown: ${stderr.slice(-2000)}`));
+          }, 15_000);
+        }),
+      ]).finally(() => clearTimeout(timer));
+      assert.equal(code, 0);
     },
     kill: () => child.kill(),
     logs: () => stderr,
@@ -82,6 +107,15 @@ const report = { versions, artifact, results: [] };
 const permissionIndex = process.argv.indexOf("--permission");
 const permission = permissionIndex < 0 ? "workspace-write" : process.argv[permissionIndex + 1];
 assert.ok(["workspace-write", "danger-full-access"].includes(permission));
+let activeClient;
+let activeModel;
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, () => {
+    activeClient?.kill();
+    void activeModel?.close();
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  });
+}
 for (const mode of ["native", "ptc"]) {
   const directory = join(output, mode);
   const project = join(directory, "project");
@@ -90,9 +124,10 @@ for (const mode of ["native", "ptc"]) {
   const env = { ...baseEnv, HOME: home, USERPROFILE: home, DSH_HOME: home,
     DSH_TELEMETRY_DISABLED: "1", DSH_PERMISSION_MODE: permission,
     DSH_TRELLIS_E2E_KEY: "loopback-test-only", TRELLIS_CONTEXT_ID: "outer-e2e", CODEX_THREAD_ID: "outer-codex",
-    PYTHONIOENCODING: "utf-8", NO_PROXY: "127.0.0.1,localhost" };
+    PYTHONIOENCODING: "utf-8", NO_PROXY: [baseEnv.NO_PROXY, "127.0.0.1", "localhost"].filter(Boolean).join(",") };
   const rootId = `e2e-${mode}-parent`;
-  const model = await modelServer(mode, rootId);
+  const model = await modelServer(mode, rootId, pythonCmd);
+  activeModel = model;
   let client;
   const events = [];
   try {
@@ -104,6 +139,8 @@ for (const mode of ["native", "ptc"]) {
     await writeFile(join(project, "test/add.test.js"), 'import { test } from "node:test"; import assert from "node:assert/strict"; import { add } from "../src/add.js"; test("add contract", () => { assert.equal(add(2,3),5); assert.equal(add(-2,1),-1); assert.equal(add(0.5,0.25),0.75); });\n');
     await copyFile(new URL("./fixture.py", import.meta.url), join(project, "e2e-fixture.py"));
     await writeFile(join(directory, "trellis-init.log"), run(process.execPath, [trellis, "init", "--dsh", "-y", "-u", "e2e", "--no-monorepo"], project, env));
+    const workflowMd = await readFile(join(project, ".trellis/workflow.md"), "utf8");
+    assert.ok(workflowMd.includes("[workflow-state:"), "trellis init --dsh must write [workflow-state: marker into .trellis/workflow.md");
     run("git", ["add", "."], project, env);
     run("git", ["commit", "-m", "chore: initialize disposable Trellis fixture"], project, env);
     run("git", ["checkout", "-b", "codex/e2e"], project, env);
@@ -127,6 +164,7 @@ for (const mode of ["native", "ptc"]) {
     };
     const connect = async () => {
       client = sdk(project, env, observe);
+      activeClient = client;
       const hello = await client.call("initialize", { cwd: project, provider: "e2e", model: "scripted", maxTokens: 4096, approvalRequests: true });
       assert.equal(hello.serverInfo.name, "deepseek-harness-sdk-runtime");
     };
@@ -214,6 +252,11 @@ for (const mode of ["native", "ptc"]) {
     await writeFile(join(directory, "model-requests.json"), JSON.stringify(model.requests, null, 2));
     client?.kill();
     throw error;
-  } finally { await model.close(); await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2)); }
+  } finally {
+    activeClient = undefined;
+    activeModel = undefined;
+    await model.close();
+    await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2));
+  }
 }
 console.log(JSON.stringify(report, null, 2));

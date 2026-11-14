@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag, e.g. v0.1.16
+        description: Existing release tag, e.g. v0.1.21
         required: true
         type: string
 
@@ -58,14 +58,19 @@ jobs:
         with:
           ref: ${{ needs.release.outputs.sha }}
           persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-      - run: npm install --global pnpm@10.33.0
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: |
+      - name: Pack and publish to npm
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
           mkdir -p "$RUNNER_TEMP/release"
-          pnpm pack --pack-destination "$RUNNER_TEMP/release"
-      - run: npm publish "$RUNNER_TEMP/release/"*.tgz --access public --tag latest --provenance --ignore-scripts
+          npm pack --pack-destination "$RUNNER_TEMP/release"
+          tarball="$RUNNER_TEMP/release/dsh-trellis-${RELEASE_TAG#v}.tgz"
+          test -f "$tarball"
+          npm publish "$tarball" --access public --tag latest --provenance --ignore-scripts

@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      zod:
-        specifier: ^4.4.3
-        version: 4.6.2
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.4

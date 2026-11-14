@@ -3,9 +3,9 @@
 DeepSeek Harness (dsh) host 插件：把 [Trellis](https://github.com/mindfold-ai/Trellis) 工作流带进 dsh，并尽量沿用 DSH 原生能力补齐 Codex / Claude Code 级体验：
 
 1. **每轮 workflow-state 面包屑注入** — 在每个 `agent/pre-step`，解析项目 `.trellis/workflow.md` 的 `[workflow-state:*]` 块 + 活跃任务状态（no_task / task_error / planning / in_progress），把对应面包屑注入会话（与 `dsh-agent-instructions` 的注入管道相同）。未变化不重复注入；被压缩后自动重注入；提示词里出现独立单词 `no-trellis` 可跳过当轮。
-2. **隔离的原生会话上下文身份** — 从当前 agent 的 DSH 原生 session header 生成受管的 `DSH_TRELLIS_CONTEXT_ID`，让 `task.py start/create/current` 解析到会话级 active-task 指针，并在子代理身份不同于 shell 自身 session 时优先使用被转发的身份；插件命令启动的子进程也显式使用同一个 DSH 身份。
+2. **隔离的原生会话上下文身份（per-session isolation）** — 从当前 agent 各自的 DSH 原生 session header 生成受管的 `DSH_TRELLIS_CONTEXT_ID`，让 `task.py start/create/current` 解析到会话级 active-task 指针：父会话与子代理之间保持按会话隔离的原生 DSH 会话身份，不共享或回退到父上下文；同一会话内由 shell 或插件命令启动的子进程则显式传入该会话自身的 DSH 身份。
 3. **原生子代理同步** — 安装插件后，Trellis 角色可用 DSH continuable 后台子代理；主会话先继续独立工作，耗尽后可调用事件驱动的 `trellis_wait`。它监听 DSH 的 `subagent/end`，利用 lifecycle 自带的 run/provider/output-block 元数据返回 `completed / failed / aborted / unknown` 的 fail-closed 结论。`error`、`max-tokens`、`refusal` 和未来未知失败原因都不会被误报成通过。宿主提供可靠的原生通知/yield 路径时，父会话也可结束当前轮等待唤醒；仍须读取实际结果与报告。
-4. **`/trellis` 命令** — `/trellis-status`（活跃任务 + git 状态）、`/trellis-finish`（只读检查 + 安全收尾清单，不提前清 active-task 指针）。命令输出不进模型历史；真正的会话收尾走技能面 `/trellis-finish-work`，由技能先归档再写 journal。rc.8 下两条零输入命令使用 `recordInput: false`，并显式拒绝参数和图片附件，避免静默忽略输入。
+4. **`/trellis` 命令** — `/trellis-status`（活跃任务 + git 状态）、`/trellis-finish`（只读检查 + 安全收尾清单，不提前清 active-task 指针）、`/trellis-doctor`（`--check` 只读体检 / `--fix` 幂等修补项目内 `.dsh/` 与 `.trellis/` 的 DSH 模板漂移，保留原文件 LF/CRLF 换行且不覆盖自定义改动）。命令输出不进模型历史；真正的会话收尾走技能面 `/trellis-finish-work`，由技能先归档再写 journal。rc.8 下上述命令均设 `recordInput: false` 并拒绝图片附件，`/trellis-status` 与 `/trellis-finish` 为零输入命令，`/trellis-doctor` 仅接受 `--check` / `--fix`。
 5. **Web 配置菜单** — DSH `0.1.7-rc.1` 的“插件 → dsh-trellis”详情页直接显示全部六个配置项；保留 `0.1.6-alpha.2` 详情页与旧版 RC 卡片。新版支持带修订号的原子保存、恢复 profile 继承值和冲突时保留草稿。配置里的 `enabled=false` 会停用工作流功能但保留表单；插件管理器的整包或组件开关则会连同表单一起卸载。
 
 非 Trellis 项目不注入面包屑；命令只有被用户显式调用时才会检查并返回“未初始化 Trellis”。
@@ -27,10 +27,10 @@ dsh plugin --profile tui add dsh-trellis
 
 DSH `0.2.0-rc.2` 的 macOS / Windows 桌面端可在菜单栏“Manage dsh command”中安装或管理内置 `dsh` 命令，无需单独安装 Node 或 pnpm。先用 `dsh --version` 确认 PATH 中实际调用的版本；旧的全局 CLI 可能与桌面端不同。桌面端默认使用 `desktop` profile，其他 profile 仍需分别安装。
 
-新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.20` 时，在插件页输入 `dsh-trellis@0.1.20`，或显式安装到实际使用的 profile：
+新版本刚发布时，插件页预览的版本可能与安装器最终选择的版本不同。需要本版插件 `0.1.21` 时，在插件页输入 `dsh-trellis@0.1.21`，或显式安装到实际使用的 profile：
 
 ```powershell
-dsh plugin --profile desktop add dsh-trellis@0.1.20
+dsh plugin --profile desktop add dsh-trellis@0.1.21
 # Web / headless 用户将 desktop 替换为对应 profile 名称。
 ```
 
@@ -59,11 +59,33 @@ dsh plugin --profile headless add file:C:/path/to/dsh-trellis
 
 `file:` 插件会作为 profile 内的 pnpm 快照安装；拉取源码更新后，尤其是版本新增文件时，需要先 remove 再 add 刷新该 profile。外部 CLI 刷新快照后重启对应进程，不要假定源码目录变化会自动热更新。
 
-配套要求：项目的 Trellis 平台需包含 dsh（`trellis init --dsh`，见 Trellis-DeepSeekHarness 适配分支），且 `.trellis/scripts` 需包含读取原生 `DSH_SESSION_ID` 的适配（已含在同一分支）。`0.2.1-alpha.4` 起宿主优先检查显式 `engines.dsh`，仅未声明时才回退 DSH peer；其 `includePrerelease: true` 规则与 npm 默认匹配不同。现有 npm peer 和 engine 范围已允许 `0.2.2-rc.2 / rc.3`、Cordis `4.1.0` 和 Schemastery `3.19.0`，无需额外放宽；通过准入仍不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。开发基线固定为 `0.2.0-rc.1`，隔离回归目标见开发章节的二十个明确宿主，不代表测试了范围内所有版本。Web 配置只在具备对应 client surface 的 profile 中加载。参见[官方版本声明迁移说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.md)。
+### 快速开始
+
+```powershell
+# 1. 安装 DSH（@next 指向 0.2.2-rc.3；@latest 目前仍指向 0.2.2-rc.1）
+npm install --global @deepseek-ai/dsh@next
+
+# 2. 为实际使用的 profile 安装 dsh-trellis
+dsh plugin --profile headless add dsh-trellis
+
+# 3. 在目标仓库初始化 Trellis DSH 模板（需 >=0.7.0-beta.4；@latest 0.6.17 缺少 DSH_TRELLIS_CONTEXT_ID 与 trellis_wait 模板）
+npx @mindfoldhq/trellis@beta init --dsh
+
+# 4. 在 DSH 会话中运行 /trellis-doctor --fix，将 @mindfoldhq/trellis@0.7.0-beta.4 模板幂等对齐到 DSH 0.2.2+ 能力契约
+```
+
+配套要求：项目的 Trellis 平台需包含 `dsh`，推荐使用 `npx @mindfoldhq/trellis@beta init --dsh`（`>=0.7.0-beta.4`；注意 `@mindfoldhq/trellis@latest` `0.6.17` 尚未包含读取 `DSH_TRELLIS_CONTEXT_ID` 和 `trellis_wait` 的模板），使 `.trellis/scripts` 读取原生 `DSH_SESSION_ID` / `DSH_TRELLIS_CONTEXT_ID`。DSH CLI `@deepseek-ai/dsh@next` 当前为 `0.2.2-rc.3`（`latest` 为 `0.2.2-rc.1`）。`0.2.1-alpha.4` 起宿主优先检查显式 `engines.dsh`，仅未声明时才回退 DSH peer；其 `includePrerelease: true` 规则与 npm 默认匹配不同。本包的 npm peer 和 `engines.dsh` 允许已验证的 `0.2.0-rc.1..0.2.2-rc.3`（并以 `<0.2.1-0` / `<0.2.2-0` / `<0.2.3-0` 限定上界，不放行未验证的 `0.2.3-*` 预发布版本）、Cordis `4.1.0` 和 Schemastery `3.19.0`；通过准入仍不等于实际兼容，不应使用 `allow-version` 绕过缺失的 API。开发基线固定为 `0.2.0-rc.1`，隔离回归目标见开发章节的二十个明确宿主，不代表测试了范围内所有版本。Web 配置只在具备对应 client surface 的 profile 中加载。参见[官方版本声明迁移说明](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/upgrade-guide/v0.2.1-alpha.3/plugin-engines-dsh/guide.md)。
 
 运行时需要 profile 提供 `sessionProjections` 服务；该依赖由插件的 `inject` 声明。自定义或精简 profile 若未组装此服务，需先加载 `@deepseek-ai/dsh-session-projection`，否则插件会等待依赖，不会退回直接扫描历史。
 
 DSH `0.2.2-alpha.2` 将工具执行移至独立 executor。自定义 profile 除 `tools` 外还需选择 `@deepseek-ai/dsh-tool-executor-native`，或具备 PTC runtime 的 `@deepseek-ai/dsh-tool-executor-ptc`；标准宿主负责组装。插件只注册 `trellis_wait`，使用宿主选定的执行器，不自行切换执行模式。
+
+### 0.1.21：自闭环适配加固、模板体检修复与零运行时依赖
+
+- 新增 `/trellis-doctor`（`--check` / `--fix`），无需等待上游 Trellis CLI 发版即可幂等检查并修补 `@mindfoldhq/trellis@0.7.0-beta.4` 生成的 `.dsh/DSH.md`、`trellis-agent-research`、`.trellis/workflow.md`、`cli_adapter.py` 与可选 `trellis-meta` 模板，保留原文件 LF/CRLF 换行且不覆盖用户自定义改动。
+- 移除 `zod` 运行时依赖，实现零运行时外部依赖（`dependencies` 为空），并在 `@deepseek-ai/dsh-settings` 缺省的精简/Headless profile 中按可选依赖安全降级。
+- 修复 `agent/pre-step` 已认领/过期面包屑替换、子代理 `no_task` 噪音抑制、`dshContextKey` 超长 SHA-256 截断、`workflow.md` 四级开发者覆盖与有界缓存、`trellis_wait` 并发安全标记及 `detachSession()` 竞争窗口、命令环境变量脱敏与 `task.py current` 退出码 `1` 兼容，以及异步 `projection.dispose()` 卸载期间同步 Cordis 表面即刻就绪。
+- Web 配置表单补充严格整数校验、实例级 `useId()`、样式引用计数与无障碍高对比度态；CI 固定 Node 24 原生 Action 并在二十个 DSH 宿主（`0.1.5-rc.2..0.2.2-rc.3`）完成 Windows/Linux 双平台验证。
 
 ### 0.1.20：DSH 0.2.2-rc.3 兼容回归
 
@@ -113,18 +135,18 @@ DSH `0.2.2-alpha.2` 将工具执行移至独立 executor。自定义 profile 除
 - 新增版本准入声明和依赖矩阵回归。保留 `0.2.0-rc.1` 开发基线、现有 peer / engine 范围及插件运行时代码，不新增清单格式、安装脚本或强制升级路径。
 - 修正安装、热替换、AgentPreset、SDK 会话和技能缓存边界说明。本版仅更新插件仓库；不改 Trellis 模板、现有项目或另行跟进的上游 PR。实际验证范围见 [RC.2 验证记录](docs/validation-dsh-0.2.1-rc.2.md)，远端 CI 与发布状态以对应标签和 npm 为准。
 
-### 0.1.11：DSH 0.2.0-rc.2 兼容验证
-
-- 增加 `0.2.0-rc.2` 隔离回归与 Windows/Linux CI 目标；本地 RC.1 / RC.2 均为 130 项通过、无失败或跳过，RC.2 独立 Web profile 验收通过。
-- 现有 `^0.2.0-rc.1` 已覆盖 RC.2，无需扩展 peer 或新增运行时补丁。开发基线仍为锁定的 RC.1。
-- 补充桌面内置 CLI、profile 区别及显式版本安装说明。本版不包含 Trellis CLI 的归档与嵌套身份补丁，它们在独立适配分支中维护。范围与限制见[RC.2 验证记录](docs/validation-dsh-0.2.0-rc.2.md)；远端 CI 和发布状态以对应标签为准。
-
 ### 0.1.12：DSH 0.2.1-alpha.2 适配
 
 - 面包屑和两条命令按每次调用读取 agent 作用域的 `workingDirectory.ensure()`，支持切换项目/worktree及目录恢复；仅旧宿主没有服务时才使用原始 `header.cwd`。目录验证失败不偷偷回退旧项目，原生 session ID 不随目录改变。
 - `trellis_wait` 只证明匹配的执行结算；完成通知投递另由宿主负责。兼容字段 `settlementNoticeQueued=false` 表示未证明入队，**不表示确认未投递**。通过依赖门禁前仍需检查子代理报告或 transcript；inactive 快照保持 unknown。
 - 为 DSH、Cordis 和 Schemastery 显式声明已验证 alpha peer 范围，保留 RC 开发基线及旧宿主范围；移除无直接用途的 `dsh-invariants` 开发依赖。新增 alpha.2 精确工具链隔离回归与 CI 目标，不升级本机 DSH。
 - alpha 用户可显式安装 `dsh-trellis@0.1.12`。Trellis 模板在独立适配工作区同步，不包含在 npm 插件包中，也不是官方 Trellis npm 升级；现有项目的 workflow 不会被插件自动改写。测试结果及边界见 [alpha.2 验证记录](docs/validation-dsh-0.2.1-alpha.2.md)，远端 CI 与发布状态以对应标签为准。
+
+### 0.1.11：DSH 0.2.0-rc.2 兼容验证
+
+- 增加 `0.2.0-rc.2` 隔离回归与 Windows/Linux CI 目标；本地 RC.1 / RC.2 均为 130 项通过、无失败或跳过，RC.2 独立 Web profile 验收通过。
+- 现有 `^0.2.0-rc.1` 已覆盖 RC.2，无需扩展 peer 或新增运行时补丁。开发基线仍为锁定的 RC.1。
+- 补充桌面内置 CLI、profile 区别及显式版本安装说明。本版不包含 Trellis CLI 的归档与嵌套身份补丁，它们在独立适配分支中维护。范围与限制见[RC.2 验证记录](docs/validation-dsh-0.2.0-rc.2.md)；远端 CI 和发布状态以对应标签为准。
 
 ### 0.1.10：DSH 0.2.0-rc.1 适配
 
@@ -258,7 +280,7 @@ Host half 是直接由 `main` 加载的 ESM JavaScript；Web half 通过 tsdown 
 启用后，由发布操作者执行，例如：
 
 ```powershell
-gh workflow run publish.yml --repo SajoLuo/dsh-trellis --ref main -f tag=v0.1.20
+gh workflow run publish.yml --repo SajoLuo/dsh-trellis --ref main -f tag=v0.1.21
 ```
 
 GitHub-hosted runner 通过 OIDC 获取临时发布凭据并生成 provenance。这里的授权属于指定发布流程；本机直接运行 `npm publish` 仍按 npm 的交互认证规则执行。首次 OIDC 真发布前，不把配置或本地检查视为认证已经验证成功。

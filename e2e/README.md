@@ -4,7 +4,7 @@
 
 ## 本机运行
 
-需要 Node `>=24.9.0`、pnpm `10.33.0`、Python 3、Git；Windows 还需 PowerShell 7 的 `pwsh`。Linux 使用 `bash`、`python3`。Linux 镜像固定 Node `24.12.0`，本轮 Windows 使用 `24.22.1`。
+需要 Node.js `>= 24`、pnpm `10.33.0`、Python 3、Git；Windows 还需 PowerShell 7 的 `pwsh`。Linux 使用 `bash`、`python3`。Linux 镜像固定 Node `24.12.0`，本轮 Windows 使用 `24.22.1`。
 
 ```powershell
 pnpm install --frozen-lockfile

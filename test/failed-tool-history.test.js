@@ -60,13 +60,14 @@ for (const phase of ["execution-mode", "finalize"]) {
     const finalize = scheduler[completionMethod].bind(scheduler);
     const failure = new Error(`injected ${phase} failure`);
     // Test-only scheduler fault injection, matching the upstream recovery tests.
-    // Real calls and results still pass through ToolRuntime and trellis_wait.
-    if (phase === "execution-mode") {
-      modeOwner.executionMode = (exec) => {
-        if (exec.callId === "failed") throw failure;
-        return executionMode(exec);
-      };
-    } else {
+    // Force sequential barriers so concurrency-safe trellis_wait stays ordered
+    // around the injected fault; real calls still pass through ToolRuntime.
+    modeOwner.executionMode = (exec) => {
+      if (phase === "execution-mode" && exec.callId === "failed") throw failure;
+      executionMode(exec);
+      return { kind: "exclusive" };
+    };
+    if (phase !== "execution-mode") {
       scheduler[completionMethod] = (exec, result) => {
         if (exec.callId === "failed") throw failure;
         return finalize(exec, result);

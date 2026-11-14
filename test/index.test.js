@@ -4,12 +4,25 @@ import { fileURLToPath } from "node:url";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
+import { Context } from "@deepseek-ai/cordis";
+import Loader from "@deepseek-ai/cordis-plugin-loader";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { BREADCRUMB_PROJECTION_KEY as KEY } from "../lib/breadcrumb-projection.js";
 import { createBreadcrumbComposer, isBreadcrumbMessage } from "../lib/breadcrumb.js";
 import { dshContextKey } from "../lib/session-env.js";
 import { sessionRuntime } from "./helpers/session-runtime.js";
+import * as trellisPlugin from "../lib/index.js";
 import { apply, inject, insertBreadcrumbDecision } from "../lib/index.js";
+
+const require = createRequire(import.meta.url);
+const settingsModule = (() => {
+  try {
+    return require("@deepseek-ai/dsh-settings");
+  } catch {
+    return {};
+  }
+})();
 
 function harness({ settings = false, projectionRegistry } = {}) {
   const effects = [];
@@ -62,9 +75,16 @@ function harness({ settings = false, projectionRegistry } = {}) {
       effects.push({ owner: "plugin", label, dispose: callback() });
     },
     on(event, listener) {
-      listeners.push({ event, listener });
+      const entry = { event, listener };
+      listeners.push(entry);
       active.add(`listener:${event}`);
-      return () => active.delete(`listener:${event}`);
+      return () => {
+        const index = listeners.indexOf(entry);
+        if (index !== -1) listeners.splice(index, 1);
+        if (!listeners.some((item) => item.event === event)) {
+          active.delete(`listener:${event}`);
+        }
+      };
     },
     inject(services, callback) {
       registrations.push(`inject:${services.join(",")}`);
@@ -83,13 +103,40 @@ function harness({ settings = false, projectionRegistry } = {}) {
         registrations.push(`projection:${definition.key}`);
         active.add(`projection:${definition.key}`);
         const registration = projectionRegistry?.register(definition);
-        const dispose = () => {
+        const markInactive = () => {
           active.delete(`projection:${definition.key}`);
-          registration?.();
         };
-        return typeof registration?.then === "function"
-          ? Object.assign(dispose, { then: registration.then.bind(registration) })
-          : dispose;
+        const dispose = () => {
+          markInactive();
+          return registration?.();
+        };
+        if (typeof registration?.then !== "function") return dispose;
+        const wrapValue = (value) => (
+          typeof value?.dispose === "function"
+            ? {
+                ...value,
+                dispose() {
+                  markInactive();
+                  return value.dispose();
+                },
+              }
+            : value
+        );
+        return Object.assign(dispose, {
+          then(onFulfilled, onRejected) {
+            return registration.then(
+              (value) => {
+                const wrapped = wrapValue(value);
+                return onFulfilled ? onFulfilled(wrapped) : wrapped;
+              },
+              (error) => {
+                markInactive();
+                if (onRejected) return onRejected(error);
+                throw error;
+              },
+            );
+          },
+        });
       },
       stateOf(session, key) {
         return projectionRegistry ? projectionRegistry.stateOf(session, key) : {};
@@ -210,6 +257,7 @@ test("enabled plugin registers commands, wait tool, one pre-step listener, and d
     ["agent/pre-step"],
   );
   assert.deepEqual(state.registrations.filter((entry) => !entry.startsWith("inject:")).sort(), [
+    "command:trellis-doctor",
     "command:trellis-finish",
     "command:trellis-status",
     `projection:${KEY}`,
@@ -244,6 +292,7 @@ test("settings namespace remounts the plugin from saved values", () => {
 
   state.publishSettings({ enabled: true, commandsEnabled: true });
   assert.deepEqual([...state.active].sort(), [
+    "command:trellis-doctor",
     "command:trellis-finish",
     "command:trellis-status",
     "listener:agent/pre-step",
@@ -534,4 +583,417 @@ test("composer without a native session id never borrows the generic dsh pointer
   assert.equal(message.source.status, "no_task");
   assert.equal(message.source.task, null);
   assert.equal(await readFile(join(project.sessions, "dsh.json"), "utf8"), binding);
+});
+
+test("insertBreadcrumbDecision strips stale breadcrumbs and matches claimed messages by id", () => {
+  const sys = { id: "sys-1", role: "system", content: "workspace" };
+  const clonedSys = { ...sys };
+  const stale = createUserMessage({
+    id: "crumb-old",
+    content: [{ type: "text", text: "old" }],
+    source: { kind: "dsh-trellis", form: "breadcrumb", status: "no_task", task: null, digest: "a" },
+  });
+  const desired = createUserMessage({
+    id: "crumb-new",
+    content: [{ type: "text", text: "new" }],
+    source: { kind: "dsh-trellis", form: "breadcrumb", status: "planning", task: "t", digest: "b" },
+  });
+  const tail = { id: "u-1", role: "user", content: "hi" };
+
+  assert.deepEqual(
+    insertBreadcrumbDecision(
+      { kind: "enter", messages: [clonedSys, { ...stale }, tail], startsRequestSeries: true },
+      [sys, stale],
+      desired,
+    ),
+    {
+      kind: "enter",
+      messages: [clonedSys, desired, tail],
+      startsRequestSeries: true,
+    },
+  );
+
+  assert.deepEqual(
+    insertBreadcrumbDecision(
+      { kind: "enter", messages: [stale, tail] },
+      [stale],
+      desired,
+    ),
+    {
+      kind: "enter",
+      messages: [desired, tail],
+    },
+  );
+});
+
+test("claimed inbox breadcrumbs do not leak or duplicate across step transitions", async (t) => {
+  const project = await temporaryProject(t);
+  const { ctx, agent, run } = await preStepRuntime(t, {}, project.root);
+  const claimFromInbox = (extra = []) => {
+    const claimed = [...extra, ...agent.inbox.nextStep];
+    agent.inbox.nextStep = [];
+    return claimed.map((entry) => ({ ...entry }));
+  };
+
+  // Step 1 queues breadcrumb in inbox.nextStep via reject
+  await run({ decision: { kind: "reject" }, step: 1 });
+  assert.equal(agent.inbox.nextStep.filter(isBreadcrumbMessage).length, 1);
+
+  // Step 2 claims queued breadcrumb, then skips -> must strip stale breadcrumb
+  const step2Claimed = claimFromInbox([prompt("please no-trellis")]);
+  const skipped = await run({
+    messages: step2Claimed,
+    decision: { kind: "enter", messages: step2Claimed, startsRequestSeries: true },
+    step: 2,
+  });
+  assert.equal(skipped.messages.some(isBreadcrumbMessage), false);
+  assert.equal(skipped.messages.length, 1);
+
+  // Queue again then suppress via subagent no_task on step 2
+  await run({ decision: { kind: "reject" }, step: 1 });
+  const subClaimed = claimFromInbox([prompt("continue")]);
+  agent.session = ctx.sessions.create("sub-claim", { meta: { cwd: project.root, origin: "subagent" } });
+  const subResult = await run({
+    messages: subClaimed,
+    decision: { kind: "enter", messages: subClaimed },
+    step: 2,
+  });
+  assert.equal(subResult.messages.some(isBreadcrumbMessage), false);
+
+  // Bind task so desired changes from no_task -> planning; old claimed breadcrumb replaced cleanly
+  agent.session = ctx.sessions.create("parent-claim", { meta: { cwd: project.root } });
+  await run({ decision: { kind: "reject" }, step: 1 });
+  const ownPointer = join(project.sessions, `${dshContextKey(agent.session.header.id)}.json`);
+  await writeFile(ownPointer, JSON.stringify({ current_task: project.task }));
+  const transitionClaimed = claimFromInbox([prompt("start work")]);
+  const transitioned = await run({
+    messages: transitionClaimed,
+    decision: { kind: "enter", messages: transitionClaimed },
+    step: 2,
+  });
+  const crumbs = transitioned.messages.filter(isBreadcrumbMessage);
+  assert.equal(crumbs.length, 1);
+  assert.equal(crumbs[0].source.status, "planning");
+
+  // Step > 1 reject decision carrying claimed stale breadcrumb strips it from decision.messages
+  const rejectWithMsgs = { kind: "reject", messages: [...transitioned.messages] };
+  const cleanedReject = await run({ messages: transitioned.messages, decision: rejectWithMsgs, step: 2 });
+  assert.equal(cleanedReject.messages.some(isBreadcrumbMessage), false);
+  assert.equal(agent.inbox.nextStep.filter(isBreadcrumbMessage).length, 1);
+});
+
+test("stopAll isolates disposer errors and clearInbox tolerates inactive inbox projection", async () => {
+  const state = harness();
+  let disposedProjection = false;
+  state.ctx.commands.register = (cmd) => {
+    state.active.add(`command:${cmd.name}`);
+    return () => {
+      state.active.delete(`command:${cmd.name}`);
+      if (cmd.name === "trellis-status") {
+        throw new Error("command disposer boom");
+      }
+    };
+  };
+  state.ctx.sessionProjections.register = () => () => {
+    disposedProjection = true;
+    state.active.delete(`projection:${KEY}`);
+  };
+  apply(state.ctx, {});
+  await assert.rejects(async () => state.disposePlugin(), /command disposer boom/);
+  assert.equal(disposedProjection, true);
+  assert.deepEqual([...state.active], []);
+
+  const inboxState = harness();
+  let inactive = false;
+  let queued = [];
+  let inboxDisposedProjection = false;
+  inboxState.ctx.sessionProjections.register = () => () => {
+    inboxDisposedProjection = true;
+    inboxState.active.delete(`projection:${KEY}`);
+  };
+  apply(inboxState.ctx, fixtureConfig);
+  const listener = inboxState.listeners.at(-1).listener;
+  const throwingInbox = {
+    get nextStep() {
+      if (inactive) throw new Error("its projection registration is not active");
+      return queued;
+    },
+    prepend(_lane, message) { queued.unshift(message); },
+    replace(id, message) { queued[queued.findIndex((m) => m.id === id)] = message; },
+    remove(id) { queued = queued.filter((m) => m.id !== id); },
+  };
+  await listener(
+    {
+      agent: {
+        session: { header: { cwd: fixtureCwd, id: "s-inactive" }, surface: { nodes: [] } },
+        inbox: throwingInbox,
+      },
+      step: 1,
+    },
+    async () => ({ kind: "reject" }),
+  );
+  assert.equal(queued.length, 1);
+  inactive = true;
+  await inboxState.disposePlugin();
+  assert.equal(inboxDisposedProjection, true);
+  assert.deepEqual([...inboxState.active], []);
+});
+
+test("async teardown serializes volatile-update toggles and ready failure clears mountedConfig", async () => {
+  const state = harness();
+  const runtimeActive = () =>
+    [...state.active].filter((entry) => entry !== "listener:loader/volatile-update");
+  const events = [];
+  let handleIndex = 0;
+  let firstCleanup;
+  let pendingAcquire;
+  state.ctx.sessionProjections.register = () => {
+    const id = ++handleIndex;
+    events.push(`register:${id}`);
+    if (id === 1) {
+      state.active.add(`projection:${KEY}:1`);
+      return Promise.resolve({
+        stateOf: () => ({}),
+        dispose() {
+          events.push("dispose-start:1");
+          firstCleanup = Promise.withResolvers();
+          return firstCleanup.promise.then(() => {
+            events.push("dispose-end:1");
+            state.active.delete(`projection:${KEY}:1`);
+          });
+        },
+      });
+    }
+    if (id === 2) {
+      pendingAcquire = Promise.withResolvers();
+      return pendingAcquire.promise.then((handle) => {
+        state.active.add(`projection:${KEY}:2`);
+        return handle;
+      });
+    }
+    state.active.add(`projection:${KEY}:${id}`);
+    return Promise.resolve({
+      stateOf: () => ({}),
+      dispose() {
+        events.push(`dispose:${id}`);
+        state.active.delete(`projection:${KEY}:${id}`);
+      },
+    });
+  };
+
+  let maxBytes = 4096;
+  let enabled = true;
+  const live = (getter) => ({ [Symbol.for("cosmokit.volatile.write")]: true, get: getter });
+  const rawConfig = {
+    enabled: live(() => enabled),
+    maxBytes: live(() => maxBytes),
+    commandsEnabled: false,
+  };
+  await apply(state.ctx, rawConfig);
+  const emitVolatile = () =>
+    state.listeners.find((l) => l.event === "loader/volatile-update").listener();
+
+  // Rapid volatile-update toggles while handle 1's async dispose is pending:
+  enabled = false;
+  emitVolatile();
+  enabled = true;
+  maxBytes = 1024;
+  emitVolatile();
+
+  await Promise.resolve();
+  // Must NOT register handle 2 before handle 1 finishes disposing; disabled intermediate step skipped
+  assert.deepEqual(events, ["register:1", "dispose-start:1"]);
+
+  const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+  firstCleanup.resolve();
+  await flushMicrotasks();
+  assert.deepEqual(events, ["register:1", "dispose-start:1", "dispose-end:1", "register:2"]);
+
+  // Failing handle 2 clears mountedConfig so an identical retry succeeds
+  pendingAcquire.reject(new Error("transient register error"));
+  await flushMicrotasks();
+  assert.deepEqual(runtimeActive(), []);
+
+  emitVolatile();
+  await flushMicrotasks();
+  assert.equal(handleIndex, 3);
+  assert.ok(state.active.has(`projection:${KEY}:3`));
+  await state.disposePlugin();
+  assert.deepEqual(runtimeActive(), []);
+});
+
+test("plugin disposal while async volatile-update teardown is pending prevents stale mount", async () => {
+  const state = harness();
+  const runtimeActive = () =>
+    [...state.active].filter((entry) => entry !== "listener:loader/volatile-update");
+  let cleanup;
+  let registrations = 0;
+  state.ctx.sessionProjections.register = () => {
+    registrations++;
+    state.active.add(`projection:${KEY}:${registrations}`);
+    if (registrations === 1) {
+      return Promise.resolve({
+        stateOf: () => ({}),
+        dispose() {
+          cleanup = Promise.withResolvers();
+          return cleanup.promise.then(() => {
+            state.active.delete(`projection:${KEY}:1`);
+          });
+        },
+      });
+    }
+    return Promise.resolve({ stateOf: () => ({}), dispose() {} });
+  };
+  let maxBytes = 4096;
+  const raw = {
+    maxBytes: { [Symbol.for("cosmokit.volatile.write")]: true, get: () => maxBytes },
+    commandsEnabled: false,
+  };
+  await apply(state.ctx, raw);
+  maxBytes = 512;
+  state.listeners.find((l) => l.event === "loader/volatile-update").listener();
+  let disposed = false;
+  const unloading = state.disposePlugin().then(() => { disposed = true; });
+  await Promise.resolve();
+  assert.equal(disposed, false);
+  cleanup.resolve();
+  await unloading;
+  assert.equal(disposed, true);
+  assert.equal(registrations, 1);
+  assert.deepEqual(runtimeActive(), []);
+});
+
+test("volatile-update synchronously registers commands, tools, shellEnv, and pre-step while async teardown is pending", async () => {
+  const state = harness();
+  const runtimeActive = () =>
+    [...state.active].filter((entry) => entry !== "listener:loader/volatile-update");
+  let firstCleanup;
+  let registerCount = 0;
+  state.ctx.sessionProjections.register = () => {
+    const id = ++registerCount;
+    state.active.add(`projection:${KEY}:${id}`);
+    return Promise.resolve({
+      stateOf: () => ({}),
+      dispose() {
+        if (id === 1) {
+          firstCleanup = Promise.withResolvers();
+          return firstCleanup.promise.then(() => {
+            state.active.delete(`projection:${KEY}:1`);
+          });
+        }
+        state.active.delete(`projection:${KEY}:${id}`);
+      },
+    });
+  };
+  let commandsEnabled = false;
+  let maxBytes = 4096;
+  const live = (getter) => ({ [Symbol.for("cosmokit.volatile.write")]: true, get: getter });
+  await apply(state.ctx, {
+    commandsEnabled: live(() => commandsEnabled),
+    maxBytes: live(() => maxBytes),
+  });
+  const emitVolatile = () =>
+    state.listeners.find((l) => l.event === "loader/volatile-update").listener();
+
+  commandsEnabled = true;
+  maxBytes = 1024;
+  emitVolatile();
+
+  // Synchronous Cordis surfaces must already be registered before async projection teardown resolves.
+  assert.deepEqual(runtimeActive().sort(), [
+    "command:trellis-doctor",
+    "command:trellis-finish",
+    "command:trellis-status",
+    "listener:agent/pre-step",
+    `projection:${KEY}:1`,
+    "shell-env:dsh-trellis-session",
+    "tool:trellis_wait",
+  ]);
+  assert.equal(registerCount, 1);
+
+  firstCleanup.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(registerCount, 2);
+  assert.ok(state.active.has(`projection:${KEY}:2`));
+  await state.disposePlugin();
+  assert.deepEqual(runtimeActive(), []);
+});
+
+test("real Loader + SessionProjectionRegistry keep commands, tools, and shellEnv synchronously live after entry.update()", {
+  skip: typeof settingsModule.SettingsForms !== "function",
+}, async (t) => {
+  const host = await sessionRuntime(t);
+  const commands = new Set();
+  const tools = new Set();
+  const shellEnvs = new Set();
+  const registerInto = (set, keyFor) => ({
+    register(item) {
+      const key = keyFor(item);
+      set.add(key);
+      return () => set.delete(key);
+    },
+  });
+  host.provide("commands", registerInto(commands, (item) => item.name));
+  host.provide("tools", registerInto(tools, (item) => item.name));
+  host.provide("shellEnv", registerInto(shellEnvs, (item) => item.name));
+  host.provide("subagents", {});
+  await host.plugin(Loader);
+  host.loader.builtins.trellis = trellisPlugin;
+
+  const id = await host.loader.create({
+    id: "dsh-trellis",
+    name: "cordis:trellis",
+    config: { enabled: true, commandsEnabled: true, maxBytes: 4096 },
+  });
+  const entry = host.loader.resolve(id);
+  await entry.fiber.await();
+  assert.deepEqual([...commands].sort(), [
+    "trellis-doctor",
+    "trellis-finish",
+    "trellis-status",
+  ]);
+  assert.deepEqual([...tools], ["trellis_wait"]);
+  assert.deepEqual([...shellEnvs], ["dsh-trellis-session"]);
+
+  await entry.update({ config: { enabled: true, commandsEnabled: false, maxBytes: 1024 } });
+  await entry.fiber.await();
+  assert.deepEqual([...commands], []);
+  assert.deepEqual([...tools], ["trellis_wait"]);
+  assert.deepEqual([...shellEnvs], ["dsh-trellis-session"]);
+
+  await entry.update({ config: { enabled: true, commandsEnabled: true, maxBytes: 512 } });
+  await entry.fiber.await();
+  assert.deepEqual([...commands].sort(), [
+    "trellis-doctor",
+    "trellis-finish",
+    "trellis-status",
+  ]);
+  assert.deepEqual([...tools], ["trellis_wait"]);
+  assert.deepEqual([...shellEnvs], ["dsh-trellis-session"]);
+  const session = host.sessions.create("loader-volatile", { meta: { cwd: fixtureCwd } });
+  await entry.update({
+    config: { enabled: true, commandsEnabled: true, maxBytes: 24, projectRootMarkers: [".trellis"] },
+  });
+  await entry.fiber.await();
+  // Dispatch agent/pre-step directly after entry.update() without yielding extra microtasks.
+  assert.deepEqual([...commands].sort(), [
+    "trellis-doctor",
+    "trellis-finish",
+    "trellis-status",
+  ]);
+  assert.deepEqual([...tools], ["trellis_wait"]);
+  assert.deepEqual([...shellEnvs], ["dsh-trellis-session"]);
+  const agent = { session, inbox: inbox() };
+  const stepped = await host.waterfall(
+    "agent/pre-step",
+    { agent, messages: [prompt("Continue")], step: 2 },
+    async () => ({ kind: "enter", messages: [prompt("Continue")], startsRequestSeries: true }),
+  );
+  assert.equal(stepped.messages.filter(isBreadcrumbMessage).length, 1);
+
+  await entry.update({ config: { enabled: false } });
+  await entry.fiber.await();
+  assert.deepEqual([...commands], []);
+  assert.deepEqual([...tools], []);
+  assert.deepEqual([...shellEnvs], []);
 });

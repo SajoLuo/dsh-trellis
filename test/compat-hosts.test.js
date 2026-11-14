@@ -11,6 +11,7 @@ const original = {
     "@deepseek-ai/dsh-ptc-runtime": "baseline",
     "@deepseek-ai/dsh-invariants": "baseline",
     "@deepseek-ai/cordis": "baseline",
+    tsdown: "^0.22.2",
     react: "19.2.8",
   },
 };
@@ -43,14 +44,30 @@ test("compat hosts explicitly include every certified historical and current tar
   assert.deepEqual(SUPPORTED_HOSTS, Object.keys(expected));
 });
 
-test("manifest engines and npm peers admit the certified targets without prerelease overrides", async () => {
+test("manifest engines and npm peers admit the certified targets under plain and prerelease semver", async () => {
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(manifest.dependencies, undefined);
   for (const [host, [cordis, schemastery]] of Object.entries(expected)) {
-    assert.ok(satisfies(host, manifest.engines.dsh), host);
-    for (const [name, range] of Object.entries(manifest.peerDependencies)) {
-      const version = name === "@deepseek-ai/cordis" ? cordis
-        : name === "@deepseek-ai/schemastery" ? schemastery : host;
-      assert.ok(satisfies(version, range), `${name}@${version}`);
+    for (const options of [undefined, { includePrerelease: true }]) {
+      assert.ok(satisfies(host, manifest.engines.dsh, options), `${host} (${JSON.stringify(options)})`);
+      for (const [name, range] of Object.entries(manifest.peerDependencies)) {
+        const version = name === "@deepseek-ai/cordis" ? cordis
+          : name === "@deepseek-ai/schemastery" ? schemastery : host;
+        assert.ok(satisfies(version, range, options), `${name}@${version} (${JSON.stringify(options)})`);
+      }
+    }
+  }
+});
+
+test("manifest engines and dsh peers reject unverified 0.2.x/0.3.x releases even with includePrerelease", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const dshPeers = Object.entries(manifest.peerDependencies).filter(([name]) => name.startsWith("@deepseek-ai/dsh-"));
+  for (const version of ["0.2.0-alpha.1", "0.2.1-alpha.1", "0.2.2-alpha.1", "0.2.3-alpha.1", "0.2.3-rc.1", "0.2.3", "0.3.0-alpha.1"]) {
+    for (const options of [undefined, { includePrerelease: true }]) {
+      assert.equal(satisfies(version, manifest.engines.dsh, options), false, `engines.dsh@${version}`);
+      for (const [name, range] of dshPeers) {
+        assert.equal(satisfies(version, range, options), false, `${name}@${version}`);
+      }
     }
   }
 });
@@ -65,6 +82,8 @@ for (const [version, [cordis, schemastery, include, loader, workingDirectory]] o
     assert.equal(deps["@deepseek-ai/cordis-plugin-loader"], loader);
     assert.equal(deps["@deepseek-ai/cordis-plugin-include"], include);
     assert.equal(deps["@deepseek-ai/dsh-invariants"], undefined);
+    assert.equal(deps.tsdown, undefined);
+    assert.equal(manifest.dependencies, undefined);
     for (const name of ["fs", "fs-local", "working-directory"]) {
       assert.equal(deps[`@deepseek-ai/dsh-${name}`], workingDirectory ? version : undefined);
     }

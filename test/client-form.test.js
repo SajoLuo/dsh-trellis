@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  DEFAULTS,
   editDraft,
   isOverridden,
   makeDraft,
+  parseDraft,
   parseMarkers,
   planDraft,
   planLanded,
@@ -56,8 +58,54 @@ test("reset stages an unset to the composition layer", () => {
 });
 
 test("invalid maxBytes blocks the form plan", () => {
-  const draft = editDraft(makeDraft(snapshot), "maxBytes", "-1");
-  assert.equal(planDraft(snapshot, draft).invalid, true);
+  for (const invalidValue of [
+    "",
+    "   ",
+    "-0",
+    "-1",
+    "1.5",
+    "1e3",
+    "0x10",
+    "0b10",
+    "0o10",
+    "+10",
+    "Infinity",
+    "NaN",
+    "9007199254740992",
+  ]) {
+    const draft = editDraft(makeDraft(snapshot), "maxBytes", invalidValue);
+    const parsed = parseDraft(draft);
+    assert.equal(parsed.invalid, true, invalidValue);
+    assert.equal(Number.isNaN(parsed.value.maxBytes), true, invalidValue);
+    assert.equal(planDraft(snapshot, draft).invalid, true, invalidValue);
+  }
+});
+
+test("clearing maxBytes from 0 keeps draft dirty so the box cannot snap back", () => {
+  const zeroSnapshot = {
+    ...snapshot,
+    value: { ...DEFAULTS, maxBytes: 0 },
+    user: { maxBytes: 0 },
+  };
+  const draft = editDraft(makeDraft(zeroSnapshot), "maxBytes", "");
+  const plan = planDraft(zeroSnapshot, draft);
+  assert.equal(plan.invalid, true);
+  assert.equal(plan.writes.length, 1);
+});
+
+test("parseDraft trims pythonCmd and skipKeyword to match runtime normalization", () => {
+  let draft = makeDraft({
+    ...snapshot,
+    value: { ...DEFAULTS, pythonCmd: "", skipKeyword: "no-trellis" },
+    user: {},
+  });
+  draft = editDraft(draft, "pythonCmd", "   ");
+  draft = editDraft(draft, "skipKeyword", "  no-trellis  ");
+  const parsed = parseDraft(draft);
+  assert.equal(parsed.invalid, false);
+  assert.equal(parsed.value.pythonCmd, "");
+  assert.equal(parsed.value.skipKeyword, "no-trellis");
+  assert.deepEqual(planDraft({ ...snapshot, value: { ...DEFAULTS } }, draft).writes, []);
 });
 
 test("save verification checks the raw user layer", () => {

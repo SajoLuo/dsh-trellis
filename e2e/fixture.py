@@ -52,16 +52,24 @@ if action == "bootstrap":
 elif action == "research":
     state = json.loads(STATE.read_text(encoding="utf-8"))
     assert context != state["context"], "child must keep its own native identity"
-    (ROOT / state["task"] / "research.md").write_text("Use a pure ES module add(a, b); validate negative and fractional numbers.\n", encoding="utf-8")
+    task_dir = ROOT / state["task"]
+    (task_dir / "research.md").write_text("Use a pure ES module add(a, b); validate negative and fractional numbers.\n", encoding="utf-8")
+    research_dir = task_dir / "research"
+    research_dir.mkdir(parents=True, exist_ok=True)
+    (research_dir / "e2e-add.md").write_text("# Research: e2e-add\nImplement add(a, b) as a pure ES module handling negative and fractional numbers.\n", encoding="utf-8")
     assert not (ROOT / "src/add.js").exists(), "research must not implement"
     print("RESEARCH_OK", context)
 elif action == "implement":
     state = json.loads(STATE.read_text(encoding="utf-8"))
-    assert (ROOT / state["task"] / "research.md").is_file()
+    task_dir = ROOT / state["task"]
+    assert (task_dir / "research.md").is_file()
+    assert (task_dir / "research/e2e-add.md").is_file()
     (ROOT / "src").mkdir(exist_ok=True)
     (ROOT / "src/add.js").write_text("export const add = (a, b) => a + b;\n", encoding="utf-8")
     print("IMPLEMENT_OK", context)
 elif action == "check":
+    state = json.loads(STATE.read_text(encoding="utf-8"))
+    assert (ROOT / state["task"] / "research/e2e-add.md").is_file()
     run("node", "--test")
     print("CHECK_OK", context)
 elif action == "finish":

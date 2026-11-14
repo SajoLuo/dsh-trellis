@@ -79,7 +79,7 @@ test("settings compatibility keeps profiles without a provider optional", () => 
   assert.doesNotThrow(() =>
     installSettingsSectionCompat(
       owner,
-      {},
+      undefined,
       namespace,
       schema,
       entry,
