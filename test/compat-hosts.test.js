@@ -36,6 +36,7 @@ const expected = {
   "0.2.2-alpha.3": ["4.0.6-alpha.2", "3.18.6-alpha.2", "1.0.11-alpha.2", "1.0.7-alpha.2", true],
   "0.2.2-rc.1": ["4.1.0", "3.19.0", "1.1.0", "1.1.0", true],
   "0.2.2-rc.2": ["4.1.0", "3.19.0", "1.1.0", "1.1.0", true],
+  "0.2.2-rc.3": ["4.1.0", "3.19.0", "1.1.0", "1.1.0", true],
 };
 
 test("compat hosts explicitly include every certified historical and current target", () => {
@@ -74,7 +75,7 @@ for (const [version, [cordis, schemastery, include, loader, workingDirectory]] o
     assert.equal(deps.react, original.devDependencies.react);
     for (const executor of ["native", "ptc"]) {
       assert.equal(deps[`@deepseek-ai/dsh-tool-executor-${executor}`],
-        ["0.2.2-alpha.2", "0.2.2-alpha.3", "0.2.2-rc.1", "0.2.2-rc.2"].includes(version) ? version : undefined);
+        ["0.2.2-alpha.2", "0.2.2-alpha.3", "0.2.2-rc.1", "0.2.2-rc.2", "0.2.2-rc.3"].includes(version) ? version : undefined);
     }
     assert.equal(manifest.private, true);
     assert.equal(manifest.scripts.prepack, undefined);
@@ -83,7 +84,7 @@ for (const [version, [cordis, schemastery, include, loader, workingDirectory]] o
   });
 }
 test("compat fixture rejects an unverified host instead of guessing its dependencies", () => {
-  for (const version of ["0.1.7-rc.3", "0.2.1", "0.2.2-alpha.4", "0.2.2-rc.3", "constructor", "__proto__"]) {
+  for (const version of ["0.1.7-rc.3", "0.2.1", "0.2.2-alpha.4", "0.2.2-rc.4", "constructor", "__proto__"]) {
     assert.throws(() => createCompatManifest(original, version), /Supported test hosts/);
   }
 });

@@ -18,9 +18,9 @@ const updates = (session) => session.snapshotEvents()
   .flatMap((event) => event.data.message.content);
 const crumbs = (session) => session.deriveMessages().filter(isBreadcrumbMessage);
 const toolNames = (request) => (request.tools ?? []).map((tool) => tool.name);
-// RC.2 rebuilds addition-only declarations on removals and empty -> nonempty
+// RC.2/RC.3 rebuild addition-only declarations on removals and empty -> nonempty
 // transitions. Keep the older host's exact wire contract independently checked.
-const rebasesEmptyAddition = llmPackage.version === "0.2.2-rc.2";
+const rebasesEmptyAddition = ["0.2.2-rc.2", "0.2.2-rc.3"].includes(llmPackage.version);
 
 // Only the provider response is scripted: request construction, tool updates,
 // pre-step delivery, Loader config and session projections use the real host.
